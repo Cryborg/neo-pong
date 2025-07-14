@@ -115,16 +115,17 @@ function setPaddlePosition(paddleElement, x, y) {
 }
 
 // Helper functions for paddle dimensions
+function getPaddleHeight(player) {
+    const paddle = player === 'left' ? paddleLeft : paddleRight;
+    return parseInt(paddle.getAttribute("height")) || PADDLE_HEIGHT;
+}
+
 function getLeftPaddleHeight() {
-    return parseInt(paddleLeft.getAttribute("height")) || PADDLE_HEIGHT;
+    return getPaddleHeight('left');
 }
 
 function getRightPaddleHeight() {
-    return parseInt(paddleRight.getAttribute("height")) || PADDLE_HEIGHT;
-}
-
-function getPaddleHeight(player) {
-    return player === 'left' ? getLeftPaddleHeight() : getRightPaddleHeight();
+    return getPaddleHeight('right');
 }
 
 // Game State
@@ -601,30 +602,34 @@ function clearLasers() {
     gameState.lasers = [];
 }
 
+function generateRandomBallSpeed() {
+    let randomY = (Math.random() - 0.5) * 12; // -6 to 6
+    if (Math.abs(randomY) < 2) {
+        randomY = randomY < 0 ? -2 : 2; // Ensure minimum angle
+    }
+    return randomY;
+}
+
+function setBallStartPosition(ball, player) {
+    if (player === 'left') {
+        ball.x = 30;
+        ball.y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
+        ball.speedX = BASE_BALL_SPEED;
+        ball.owner = 'left';
+    } else {
+        ball.x = CONTAINER_WIDTH - 30;
+        ball.y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
+        ball.speedX = -BASE_BALL_SPEED;
+        ball.owner = 'right';
+    }
+    ball.speedY = generateRandomBallSpeed();
+}
+
 function resetBalls() {
     if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
         // Both brick modes: each ball starts from its respective paddle
-        gameState.balls[0].x = 30; // Start from left paddle
-        gameState.balls[0].y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
-        gameState.balls[0].speedX = BASE_BALL_SPEED;
-        // Random angle but not too vertical (between -6 and 6, avoiding very small values)
-        let randomY = (Math.random() - 0.5) * 12; // -6 to 6
-        if (Math.abs(randomY) < 2) {
-            randomY = randomY < 0 ? -2 : 2; // Ensure minimum angle
-        }
-        gameState.balls[0].speedY = randomY;
-        gameState.balls[0].owner = 'left';
-        
-        gameState.balls[1].x = CONTAINER_WIDTH - 30; // Start from right paddle
-        gameState.balls[1].y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
-        gameState.balls[1].speedX = -BASE_BALL_SPEED;
-        // Random angle but not too vertical
-        let randomY1 = (Math.random() - 0.5) * 12; // -6 to 6
-        if (Math.abs(randomY1) < 2) {
-            randomY1 = randomY1 < 0 ? -2 : 2; // Ensure minimum angle
-        }
-        gameState.balls[1].speedY = randomY1;
-        gameState.balls[1].owner = 'right';
+        setBallStartPosition(gameState.balls[0], 'left');
+        setBallStartPosition(gameState.balls[1], 'right');
     } else {
         // Single ball mode (standard pong)
         let startFromLeft = false;
@@ -635,24 +640,7 @@ function resetBalls() {
             startFromLeft = Math.random() > 0.5; // Random in PvP
         }
         
-        if (startFromLeft) {
-            gameState.balls[0].x = 30; // Start from left paddle
-            gameState.balls[0].y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
-            gameState.balls[0].speedX = BASE_BALL_SPEED;
-            gameState.balls[0].owner = 'left';
-        } else {
-            gameState.balls[0].x = CONTAINER_WIDTH - 30; // Start from right paddle
-            gameState.balls[0].y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
-            gameState.balls[0].speedX = -BASE_BALL_SPEED;
-            gameState.balls[0].owner = 'right';
-        }
-        
-        // Random angle but not too vertical
-        let randomY = (Math.random() - 0.5) * 12; // -6 to 6
-        if (Math.abs(randomY) < 2) {
-            randomY = randomY < 0 ? -2 : 2; // Ensure minimum angle
-        }
-        gameState.balls[0].speedY = randomY;
+        setBallStartPosition(gameState.balls[0], startFromLeft ? 'left' : 'right');
     }
 }
 
@@ -663,36 +651,15 @@ function resetSingleBall(ballIndex, losingPlayer = null) {
     
     if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
         // Both brick modes: respawn from the losing player's own paddle (like game start)
-        if (losingPlayer === 'left') {
-            // Left player lost, respawn from left paddle
-            ball.x = 30;
-            ball.y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
-            ball.speedX = BASE_BALL_SPEED; // Move toward right (away from paddle)
-            ball.owner = 'left';
-            console.log(`DEBUG: Ball ${ballIndex} respawning from LEFT paddle (left player lost), x=${ball.x}, speedX=${ball.speedX}`);
-        } else if (losingPlayer === 'right') {
-            // Right player lost, respawn from right paddle
-            ball.x = CONTAINER_WIDTH - 30;
-            ball.y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
-            ball.speedX = -BASE_BALL_SPEED; // Move toward left (away from paddle)
-            ball.owner = 'right';
-            console.log(`DEBUG: Ball ${ballIndex} respawning from RIGHT paddle (right player lost), x=${ball.x}, speedX=${ball.speedX}`);
+        if (losingPlayer === 'left' || losingPlayer === 'right') {
+            setBallStartPosition(ball, losingPlayer);
+            console.log(`DEBUG: Ball ${ballIndex} respawning from ${losingPlayer.toUpperCase()} paddle (${losingPlayer} player lost), x=${ball.x}, speedX=${ball.speedX}`);
         } else {
             // Fallback to original logic (shouldn't happen with new system)
-            if (ballIndex === 0) {
-                ball.x = 30;
-                ball.y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
-                ball.speedX = BASE_BALL_SPEED;
-                ball.owner = 'left';
-            } else {
-                ball.x = CONTAINER_WIDTH - 30;
-                ball.y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
-                ball.speedX = -BASE_BALL_SPEED;
-                ball.owner = 'right';
-            }
+            const fallbackPlayer = ballIndex === 0 ? 'left' : 'right';
+            setBallStartPosition(ball, fallbackPlayer);
             console.log(`DEBUG: Ball ${ballIndex} using fallback positioning`);
         }
-        ball.speedY = Math.random() > 0.5 ? 3 : -3;
     } else {
         // Single ball modes - reverse direction toward the last scorer
         ball.x = CONTAINER_WIDTH / 2;
@@ -710,37 +677,50 @@ function resetSingleBall(ballIndex, losingPlayer = null) {
 function updatePaddles() {
     const currentTime = Date.now();
     
-    // Player 1 (left paddle) - always human controlled
-    const leftFrozen = gameState.frozenPaddles.left && currentTime < gameState.frozenPaddles.left;
-    if (!leftFrozen) {
-        if (gameState.keysPressed[gameConfig.p1Keys.up] && gameState.paddleLeftY > 0) {
-            gameState.paddleLeftY -= BASE_PADDLE_SPEED;
+    // Helper function to update paddle position based on controls
+    function updateHumanPaddle(player, upKey, downKey) {
+        const isLeft = player === 'left';
+        const currentY = isLeft ? gameState.paddleLeftY : gameState.paddleRightY;
+        const paddleHeight = getPaddleHeight(player);
+        const frozen = gameState.frozenPaddles[player] && currentTime < gameState.frozenPaddles[player];
+        
+        if (!frozen) {
+            let newY = currentY;
+            if (gameState.keysPressed[upKey] && currentY > 0) {
+                newY -= BASE_PADDLE_SPEED;
+            }
+            if (gameState.keysPressed[downKey] && currentY < CONTAINER_HEIGHT - paddleHeight) {
+                newY += BASE_PADDLE_SPEED;
+            }
+            
+            if (isLeft) {
+                gameState.paddleLeftY = newY;
+            } else {
+                gameState.paddleRightY = newY;
+            }
         }
-        if (gameState.keysPressed[gameConfig.p1Keys.down] && gameState.paddleLeftY < CONTAINER_HEIGHT - getLeftPaddleHeight()) {
-            gameState.paddleLeftY += BASE_PADDLE_SPEED;
-        }
+        
+        const paddle = isLeft ? paddleLeft : paddleRight;
+        const paddleX = isLeft ? 10 : CONTAINER_WIDTH - 20;
+        const paddleY = isLeft ? gameState.paddleLeftY : gameState.paddleRightY;
+        setPaddlePosition(paddle, paddleX, paddleY);
     }
-    setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
+    
+    // Player 1 (left paddle) - always human controlled
+    updateHumanPaddle('left', gameConfig.p1Keys.up, gameConfig.p1Keys.down);
     
     // Player 2 (right paddle) - AI or human depending on mode
     const rightFrozen = gameState.frozenPaddles.right && currentTime < gameState.frozenPaddles.right;
     if (gameConfig.mode === 'pvp' || gameConfig.mode === 'brick2p') {
         // Human controlled
-        if (!rightFrozen) {
-            if (gameState.keysPressed[gameConfig.p2Keys.up] && gameState.paddleRightY > 0) {
-                gameState.paddleRightY -= BASE_PADDLE_SPEED;
-            }
-            if (gameState.keysPressed[gameConfig.p2Keys.down] && gameState.paddleRightY < CONTAINER_HEIGHT - getRightPaddleHeight()) {
-                gameState.paddleRightY += BASE_PADDLE_SPEED;
-            }
-        }
+        updateHumanPaddle('right', gameConfig.p2Keys.up, gameConfig.p2Keys.down);
     } else {
         // AI controlled (pvai and brick modes)
         if (!rightFrozen) {
             updateAI();
         }
+        setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
     }
-    setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
 }
 
 function updateAI() {
@@ -989,62 +969,47 @@ function updateBalls() {
             }
         }
         
-        // Left paddle collision
-        if (
-            ball.x - BALL_RADIUS <= 20 &&
-            ball.x - BALL_RADIUS > 10 &&
-            ball.y >= gameState.paddleLeftY &&
-            ball.y <= gameState.paddleLeftY + getLeftPaddleHeight() &&
-            ball.speedX < 0
-        ) {
-            ball.owner = 'left'; // Update ownership
+        // Helper function for paddle collision detection and handling
+        function handlePaddleCollision(player) {
+            const isLeft = player === 'left';
+            const paddleX = isLeft ? 20 : CONTAINER_WIDTH - 20;
+            const paddleY = isLeft ? gameState.paddleLeftY : gameState.paddleRightY;
+            const paddleHeight = getPaddleHeight(player);
+            const collisionCondition = isLeft 
+                ? (ball.x - BALL_RADIUS <= 20 && ball.x - BALL_RADIUS > 10 && ball.speedX < 0)
+                : (ball.x + BALL_RADIUS >= CONTAINER_WIDTH - 20 && ball.x + BALL_RADIUS < CONTAINER_WIDTH - 10 && ball.speedX > 0);
             
-            // Check for sticky paddle effect
-            if (gameState.activeEffects.left.sticky) {
-                // Stick ball to paddle
-                gameState.stickyBalls[i] = {
-                    player: 'left',
-                    offset: ball.y - (gameState.paddleLeftY + getLeftPaddleHeight() / 2)
-                };
-                ball.speedX = 0;
-                ball.speedY = 0;
-            } else {
-                // Normal bounce
-                ball.speedX *= -1;
-                ball.x = 20 + BALL_RADIUS;
-                // Add spin based on where ball hits paddle
-                const hitPosition = (ball.y - gameState.paddleLeftY) / getLeftPaddleHeight();
-                ball.speedY = (hitPosition - 0.5) * 8;
+            if (collisionCondition &&
+                ball.y >= paddleY &&
+                ball.y <= paddleY + paddleHeight) {
+                
+                ball.owner = player; // Update ownership
+                
+                // Check for sticky paddle effect
+                if (gameState.activeEffects[player].sticky) {
+                    // Stick ball to paddle
+                    gameState.stickyBalls[i] = {
+                        player: player,
+                        offset: ball.y - (paddleY + paddleHeight / 2)
+                    };
+                    ball.speedX = 0;
+                    ball.speedY = 0;
+                } else {
+                    // Normal bounce
+                    ball.speedX *= -1;
+                    ball.x = isLeft ? paddleX + BALL_RADIUS : paddleX - BALL_RADIUS;
+                    // Add spin based on where ball hits paddle
+                    const hitPosition = (ball.y - paddleY) / paddleHeight;
+                    ball.speedY = (hitPosition - 0.5) * 8;
+                }
+                return true;
             }
+            return false;
         }
         
-        // Right paddle collision (always active now)
-        if (ball.x + BALL_RADIUS >= CONTAINER_WIDTH - 20 &&
-            ball.x + BALL_RADIUS < CONTAINER_WIDTH - 10 &&
-            ball.y >= gameState.paddleRightY &&
-            ball.y <= gameState.paddleRightY + getRightPaddleHeight() &&
-            ball.speedX > 0
-        ) {
-            ball.owner = 'right'; // Update ownership
-            
-            // Check for sticky paddle effect
-            if (gameState.activeEffects.right.sticky) {
-                // Stick ball to paddle
-                gameState.stickyBalls[i] = {
-                    player: 'right',
-                    offset: ball.y - (gameState.paddleRightY + getRightPaddleHeight() / 2)
-                };
-                ball.speedX = 0;
-                ball.speedY = 0;
-            } else {
-                // Normal bounce
-                ball.speedX *= -1;
-                ball.x = CONTAINER_WIDTH - 20 - BALL_RADIUS;
-                // Add spin based on where ball hits paddle
-                const hitPosition = (ball.y - gameState.paddleRightY) / getRightPaddleHeight();
-                ball.speedY = (hitPosition - 0.5) * 8;
-            }
-        }
+        // Check paddle collisions
+        handlePaddleCollision('left');
+        handlePaddleCollision('right');
         
         // Scoring
         if (ball.x < 0) {
@@ -1640,13 +1605,14 @@ function updatePaddleSize(player) {
         const currentY = player === 'left' ? gameState.paddleLeftY : gameState.paddleRightY;
         if (currentY + targetHeight > CONTAINER_HEIGHT) {
             const newY = CONTAINER_HEIGHT - targetHeight;
+            const paddleX = player === 'left' ? 10 : CONTAINER_WIDTH - 20;
+            
             if (player === 'left') {
                 gameState.paddleLeftY = newY;
-                setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
             } else {
                 gameState.paddleRightY = newY;
-                setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
             }
+            setPaddlePosition(paddle, paddleX, newY);
         }
         // If paddle is at top and shrinking, no adjustment needed
         // The paddle naturally grows/shrinks from its current position
