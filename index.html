@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Pong v0.3</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Configuration Screen -->
+    <div id="config-screen">
+        <h2>Pong v0.3 - Game Setup</h2>
+        
+        <div class="config-section">
+            <label>Game Mode:</label>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="gameMode" value="pvp" checked>
+                    Player vs Player
+                </label>
+            </div>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="gameMode" value="pvai">
+                    Player vs AI
+                </label>
+            </div>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="gameMode" value="brick">
+                    Brick Practice (vs AI)
+                </label>
+            </div>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="gameMode" value="brick2p">
+                    Brick Practice (2 Players)
+                </label>
+            </div>
+        </div>
+        
+        <div class="config-section" id="difficulty-section" style="display: none;">
+            <label for="difficulty">AI Difficulty:</label>
+            <select id="difficulty">
+                <option value="1">Level 1 - Very Easy</option>
+                <option value="2">Level 2 - Easy</option>
+                <option value="3" selected>Level 3 - Medium</option>
+                <option value="4">Level 4 - Hard</option>
+                <option value="5">Level 5 - Very Hard</option>
+            </select>
+        </div>
+        
+        <div class="config-section" id="max-score-section">
+            <label for="max-score">Score to Win:</label>
+            <select id="max-score">
+                <option value="5">5 Points</option>
+                <option value="10" selected>10 Points</option>
+                <option value="15">15 Points</option>
+                <option value="20">20 Points</option>
+            </select>
+        </div>
+        
+        <div class="config-section">
+            <label for="field-width">Field Width:</label>
+            <select id="field-width">
+                <option value="800">Standard (800px)</option>
+                <option value="1200">Wide (1200px)</option>
+                <option value="1600">Ultra Wide (1600px)</option>
+                <option value="2000">Mega Wide (2000px)</option>
+            </select>
+        </div>
+        
+        <div class="config-section">
+            <label>Player 1 Controls (Left Paddle):</label>
+            <input type="text" id="p1-up" placeholder="Up key" value="A" maxlength="1">
+            <input type="text" id="p1-down" placeholder="Down key" value="Q" maxlength="1">
+        </div>
+        
+        <div class="config-section" id="p2-controls-section">
+            <label>Player 2 Controls (Right Paddle):</label>
+            <div>Arrow Up / Arrow Down (Fixed)</div>
+        </div>
+        
+        <button id="start-button">Start Game</button>
+    </div>
+    
+    <!-- Background Preview -->
+    <div id="background-preview">
+        <div class="bg-paddle-right"></div>
+    </div>
+    
+    <!-- Game Container -->
+    <div id="game-container" class="hidden">
+        <div id="scoreboard">0 : 0</div>
+        <svg id="game-svg" viewBox="0 0 800 400">
+            <!-- Middle dashed line -->
+            <line x1="400" y1="0" x2="400" y2="400" stroke="white" stroke-width="2" stroke-dasharray="10,10" opacity="0.3"/>
+            
+            <!-- Paddles -->
+            <rect id="paddle-left" x="10" y="160" width="10" height="80" fill="white"/>
+            <rect id="paddle-right" x="780" y="160" width="10" height="80" fill="white"/>
+            
+            <!-- Balls -->
+            <circle id="ball" cx="400" cy="200" r="6" fill="white"/>
+            <circle id="ball2" cx="400" cy="200" r="6" fill="white" style="display: none;"/>
+            
+            <!-- Bricks container for brick mode -->
+            <g id="bricks-container"></g>
+            
+            <!-- Bonuses container -->
+            <g id="bonuses-container"></g>
+            
+            <!-- Lasers container -->
+            <g id="lasers-container"></g>
+        </svg>
+    </div>
+    
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="hidden">
+        <h2 id="winner-text">Player 1 Wins!</h2>
+        <p id="final-score">Final Score: 10 - 8</p>
+        <div class="button-group">
+            <button class="game-button play-again-button" id="play-again">Play Again</button>
+            <button class="game-button menu-button" id="back-to-menu">Back to Menu</button>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
