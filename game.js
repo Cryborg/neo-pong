@@ -100,7 +100,9 @@ const BONUS_TYPES = {
     LASER_PADDLE: 'laser_paddle',
     SLOW_BALL: 'slow_ball',
     GHOST_BALL: 'ghost_ball',
-    EXPLOSIVE_BALL: 'explosive_ball'
+    EXPLOSIVE_BALL: 'explosive_ball',
+    REVERSE_CONTROLS: 'reverse_controls',
+    SHRINK_PADDLE: 'shrink_paddle'
 };
 
 // Helper functions for SVG positioning
@@ -565,9 +567,11 @@ function resetGame() {
         gameState.effectDisplays[player] = [];
     });
     
-    // Reset paddle sizes
+    // Reset paddle sizes and colors
     paddleLeft.setAttribute("height", PADDLE_HEIGHT);
     paddleRight.setAttribute("height", PADDLE_HEIGHT);
+    paddleLeft.style.filter = '';
+    paddleRight.style.filter = '';
     
     // Apply initial paddle positions
     setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
@@ -749,12 +753,31 @@ function updatePaddles() {
         const frozen = gameState.frozenPaddles[player] && currentTime < gameState.frozenPaddles[player];
         
         if (!frozen) {
-            let newY = currentY;
-            if (gameState.keysPressed[upKey] && currentY > 0) {
-                newY -= BASE_PADDLE_SPEED;
+            // Check if player has slow effect applied
+            const playerEffects = gameState.activeEffects[player];
+            const slowEffect = playerEffects.slowBall && 
+                              (currentTime - playerEffects.slowBall.startTime < playerEffects.slowBall.duration);
+            const paddleSpeed = slowEffect ? BASE_PADDLE_SPEED * 0.8 : BASE_PADDLE_SPEED; // 20% slower
+            
+            // Debug: log when human player is slowed
+            if (slowEffect && Math.random() < 0.02) { // Log occasionally to avoid spam
+                console.log(`🐢 Player ${player} is slowed! Original speed: ${BASE_PADDLE_SPEED}, Current speed: ${paddleSpeed}`);
             }
-            if (gameState.keysPressed[downKey] && currentY < CONTAINER_HEIGHT - paddleHeight) {
-                newY += BASE_PADDLE_SPEED;
+            
+            // Check if player has reverse controls effect applied
+            const reverseEffect = playerEffects.reverseControls && 
+                                 (currentTime - playerEffects.reverseControls.startTime < playerEffects.reverseControls.duration);
+            
+            let newY = currentY;
+            // Apply reverse controls if effect is active
+            const actualUpKey = reverseEffect ? downKey : upKey;
+            const actualDownKey = reverseEffect ? upKey : downKey;
+            
+            if (gameState.keysPressed[actualUpKey] && currentY > 0) {
+                newY -= paddleSpeed;
+            }
+            if (gameState.keysPressed[actualDownKey] && currentY < CONTAINER_HEIGHT - paddleHeight) {
+                newY += paddleSpeed;
             }
             
             if (isLeft) {
@@ -844,11 +867,22 @@ function updateAI() {
     const paddleCenterY = gameState.paddleRightY + getRightPaddleHeight() / 2;
     const targetCenterY = gameState.aiTargetY + getRightPaddleHeight() / 2;
     
+    // Check if AI has slow effect applied
+    const rightPlayerEffects = gameState.activeEffects.right;
+    const aiSlowEffect = rightPlayerEffects.slowBall && 
+                        (Date.now() - rightPlayerEffects.slowBall.startTime < rightPlayerEffects.slowBall.duration);
+    const aiSpeed = aiSlowEffect ? aiConfig.speed * 0.8 : aiConfig.speed; // 20% slower
+    
+    // Debug: log when AI is slowed
+    if (aiSlowEffect && Math.random() < 0.01) { // Log occasionally to avoid spam
+        console.log(`🐢 AI is slowed! Original speed: ${aiConfig.speed}, Current speed: ${aiSpeed}`);
+    }
+    
     if (Math.abs(paddleCenterY - targetCenterY) > 5) {
         if (paddleCenterY < targetCenterY && gameState.paddleRightY < CONTAINER_HEIGHT - getRightPaddleHeight()) {
-            gameState.paddleRightY += Math.min(aiConfig.speed, targetCenterY - paddleCenterY);
+            gameState.paddleRightY += Math.min(aiSpeed, targetCenterY - paddleCenterY);
         } else if (paddleCenterY > targetCenterY && gameState.paddleRightY > 0) {
-            gameState.paddleRightY -= Math.min(aiConfig.speed, paddleCenterY - targetCenterY);
+            gameState.paddleRightY -= Math.min(aiSpeed, paddleCenterY - targetCenterY);
         }
     }
     
@@ -1472,13 +1506,16 @@ function getEffectIcon(effectType) {
         case 'slowBall': return '🐢';
         case 'explosiveBall': return '💥';
         case 'ghostWarning': return '👻';
+        case 'reverseControls': return '🔀';
+        case 'shrinkPaddle': return '📏';
         default: return '❓';
     }
 }
 
 function isEffectDebuff(effectType) {
-    // Slow ball and ghost warning are debuffs/warnings
-    return effectType === 'slowBall' || effectType === 'ghostWarning';
+    // Debuffs/malus effects get red circles
+    return effectType === 'slowBall' || effectType === 'ghostWarning' || 
+           effectType === 'reverseControls' || effectType === 'shrinkPaddle';
 }
 
 function getEffectDisplayName(effectType) {
@@ -1489,6 +1526,8 @@ function getEffectDisplayName(effectType) {
         case 'slowBall': return '🐢 Slow';
         case 'explosiveBall': return '💥 Boom';
         case 'ghostWarning': return '👻 Ghost';
+        case 'reverseControls': return '🔀 Reverse';
+        case 'shrinkPaddle': return '📏 Small';
         default: return effectType;
     }
 }
@@ -1501,6 +1540,8 @@ function getEffectColor(effectType) {
         case 'slowBall': return '#9C27B0';
         case 'explosiveBall': return '#E91E63';
         case 'ghostWarning': return '#607D8B';
+        case 'reverseControls': return '#9C27B0';
+        case 'shrinkPaddle': return '#795548';
         default: return '#FFF';
     }
 }
@@ -1521,8 +1562,8 @@ function generateBonus(x, y, ballOwner) {
     circle.setAttribute("cy", y);
     circle.setAttribute("r", "15");
     circle.setAttribute("fill", getBonusColor(randomType));
-    circle.setAttribute("stroke", "white");
-    circle.setAttribute("stroke-width", "2");
+    circle.setAttribute("stroke", getBonusStrokeColor(randomType));
+    circle.setAttribute("stroke-width", "3");
     
     // Create bonus text/icon
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1553,6 +1594,24 @@ function generateBonus(x, y, ballOwner) {
     });
 }
 
+function getBonusType(type) {
+    switch (type) {
+        case BONUS_TYPES.BIG_PADDLE:
+        case BONUS_TYPES.MULTI_BALL:
+        case BONUS_TYPES.LASER_PADDLE:
+        case BONUS_TYPES.GHOST_BALL:
+        case BONUS_TYPES.EXPLOSIVE_BALL:
+            return 'positive'; // Bonus positif pour le joueur qui l'attrape
+        case BONUS_TYPES.SLOW_BALL:
+            return 'opponent_malus'; // Malus à envoyer à l'adversaire (vert)
+        case BONUS_TYPES.REVERSE_CONTROLS:
+        case BONUS_TYPES.SHRINK_PADDLE:
+            return 'self_malus'; // Malus pour le joueur qui l'attrape (rouge)
+        default:
+            return 'positive';
+    }
+}
+
 function getBonusColor(type) {
     switch (type) {
         case BONUS_TYPES.BIG_PADDLE: return '#4CAF50';
@@ -1561,7 +1620,19 @@ function getBonusColor(type) {
         case BONUS_TYPES.SLOW_BALL: return '#9C27B0';
         case BONUS_TYPES.GHOST_BALL: return '#607D8B';
         case BONUS_TYPES.EXPLOSIVE_BALL: return '#E91E63';
+        case BONUS_TYPES.REVERSE_CONTROLS: return '#9C27B0';
+        case BONUS_TYPES.SHRINK_PADDLE: return '#795548';
         default: return '#FFF';
+    }
+}
+
+function getBonusStrokeColor(type) {
+    const bonusType = getBonusType(type);
+    switch (bonusType) {
+        case 'positive': return 'white'; // Bonus positif - contour blanc
+        case 'opponent_malus': return '#4CAF50'; // Malus à envoyer - contour vert
+        case 'self_malus': return '#F44336'; // Malus personnel - contour rouge
+        default: return 'white';
     }
 }
 
@@ -1573,6 +1644,8 @@ function getBonusIcon(type) {
         case BONUS_TYPES.SLOW_BALL: return '🐢';
         case BONUS_TYPES.GHOST_BALL: return '👻';
         case BONUS_TYPES.EXPLOSIVE_BALL: return '💥';
+        case BONUS_TYPES.REVERSE_CONTROLS: return '🔀';
+        case BONUS_TYPES.SHRINK_PADDLE: return '📏';
         default: return '?';
     }
 }
@@ -1635,11 +1708,11 @@ function applyBonus(type, player) {
         case BONUS_TYPES.BIG_PADDLE:
             if (effects.bigPaddle) {
                 // Extend existing effect
-                effects.bigPaddle.duration += 10000;
+                effects.bigPaddle.duration += 5000; // Reduced from 10000 to 5000
             } else {
                 // Create new effect
                 effects.bigPaddle = {
-                    duration: 10000,
+                    duration: 5000, // Reduced from 10000 to 5000
                     startTime: Date.now()
                 };
             }
@@ -1680,17 +1753,21 @@ function applyBonus(type, player) {
             const opponentSide = player === 'left' ? 'right' : 'left';
             const opponentEffects = gameState.activeEffects[opponentSide];
             
+            console.log(`🐢 SLOW_BALL applied! Player ${player} caught it, affecting opponent ${opponentSide}`);
+            
             if (opponentEffects.slowBall) {
                 // Extend existing effect on opponent
                 opponentEffects.slowBall.duration += 7000;
+                console.log(`🐢 Extended slow effect on ${opponentSide}`);
             } else {
                 // Create new effect on opponent
                 opponentEffects.slowBall = {
                     duration: 7000,
                     startTime: Date.now()
                 };
+                console.log(`🐢 New slow effect on ${opponentSide}, duration: 7000ms`);
             }
-            applySlowBall(player);
+            applySlowBall(opponentSide); // Fixed: should be opponentSide, not player
             break;
             
         case BONUS_TYPES.GHOST_BALL:
@@ -1720,20 +1797,69 @@ function applyBonus(type, player) {
             applyExplosiveBall(player);
             break;
             
+        case BONUS_TYPES.REVERSE_CONTROLS:
+            if (effects.reverseControls) {
+                // Extend existing effect
+                effects.reverseControls.duration += 8000;
+            } else {
+                // Create new effect
+                effects.reverseControls = {
+                    duration: 8000, // 8 seconds
+                    startTime: Date.now()
+                };
+            }
+            updatePaddleColor(player);
+            break;
+            
+        case BONUS_TYPES.SHRINK_PADDLE:
+            // Check if player has big paddle effect - if so, remove it instead of shrinking
+            if (effects.bigPaddle) {
+                delete effects.bigPaddle;
+                updatePaddleSize(player);
+            } else {
+                // No big paddle effect, apply shrink
+                if (effects.shrinkPaddle) {
+                    // Extend existing effect
+                    effects.shrinkPaddle.duration += 12000;
+                } else {
+                    // Create new effect
+                    effects.shrinkPaddle = {
+                        duration: 12000, // 12 seconds
+                        startTime: Date.now()
+                    };
+                }
+                updatePaddleSize(player);
+            }
+            break;
+            
     }
 }
 
 function updatePaddleSize(player) {
     const paddle = player === 'left' ? paddleLeft : paddleRight;
-    const effect = gameState.activeEffects[player].bigPaddle;
+    const bigEffect = gameState.activeEffects[player].bigPaddle;
+    const shrinkEffect = gameState.activeEffects[player].shrinkPaddle;
     const currentHeight = parseInt(paddle.getAttribute("height"));
-    const targetHeight = effect && Date.now() - effect.startTime < effect.duration ? 120 : PADDLE_HEIGHT;
+    
+    // Determine target height based on active effects
+    let targetHeight = PADDLE_HEIGHT;
+    let iconSuffix = "";
+    
+    const currentTime = Date.now();
+    
+    if (bigEffect && currentTime - bigEffect.startTime < bigEffect.duration) {
+        targetHeight = 120; // Big paddle
+        iconSuffix = "-big";
+    } else if (shrinkEffect && currentTime - shrinkEffect.startTime < shrinkEffect.duration) {
+        targetHeight = 50; // Small paddle
+        iconSuffix = "-small"; // Nous utiliserons paddle.svg pour le petit aussi
+    }
     
     // Only update if height actually changed
     if (currentHeight !== targetHeight) {
         // Update paddle properties first
         paddle.setAttribute("height", targetHeight);
-        paddle.setAttribute("href", targetHeight > PADDLE_HEIGHT ? "icons/paddle-big.svg" : "icons/paddle.svg");
+        paddle.setAttribute("href", `icons/paddle${iconSuffix}.svg`);
         
         // If paddle would go out of bounds (bottom), adjust position slightly
         const currentY = player === 'left' ? gameState.paddleLeftY : gameState.paddleRightY;
@@ -1753,8 +1879,29 @@ function updatePaddleSize(player) {
     }
     
     // Clean up expired effects
-    if (!effect || Date.now() - effect.startTime >= effect.duration) {
+    if (!bigEffect || currentTime - bigEffect.startTime >= bigEffect.duration) {
         delete gameState.activeEffects[player].bigPaddle;
+    }
+    if (!shrinkEffect || currentTime - shrinkEffect.startTime >= shrinkEffect.duration) {
+        delete gameState.activeEffects[player].shrinkPaddle;
+    }
+}
+
+function updatePaddleColor(player) {
+    const paddle = player === 'left' ? paddleLeft : paddleRight;
+    const effects = gameState.activeEffects[player];
+    const currentTime = Date.now();
+    
+    // Check if reverse controls effect is active
+    const reverseEffect = effects.reverseControls && 
+                         (currentTime - effects.reverseControls.startTime < effects.reverseControls.duration);
+    
+    if (reverseEffect) {
+        // Color paddle red when reverse controls is active
+        paddle.style.filter = 'hue-rotate(0deg) saturate(2) brightness(0.8) sepia(1) hue-rotate(-50deg)';
+    } else {
+        // Reset to normal color
+        paddle.style.filter = '';
     }
 }
 
@@ -1865,10 +2012,12 @@ function applyExplosiveBall(player) {
 function updateEffects() {
     // Update left paddle effects
     updatePaddleSize('left');
+    updatePaddleColor('left');
     updateEffectDisplay('left');
     
     // Update right paddle effects
     updatePaddleSize('right');
+    updatePaddleColor('right');
     updateEffectDisplay('right');
     
     // Remove expired effects
@@ -1877,7 +2026,13 @@ function updateEffects() {
         for (let effectName in effects) {
             const effect = effects[effectName];
             if (Date.now() - effect.startTime >= effect.duration) {
-                delete effects[effectName];
+                // Check if we're removing reverse controls effect to update paddle color
+                if (effectName === 'reverseControls') {
+                    delete effects[effectName];
+                    updatePaddleColor(player);
+                } else {
+                    delete effects[effectName];
+                }
             }
         }
     }
