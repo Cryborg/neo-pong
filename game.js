@@ -99,7 +99,8 @@ const BONUS_TYPES = {
     MULTI_BALL: 'multi_ball', 
     LASER_PADDLE: 'laser_paddle',
     SLOW_BALL: 'slow_ball',
-    STICKY_PADDLE: 'sticky_paddle'
+    GHOST_BALL: 'ghost_ball',
+    EXPLOSIVE_BALL: 'explosive_ball'
 };
 
 // Helper functions for SVG positioning
@@ -161,7 +162,6 @@ let gameState = {
     paused: false,
     countdowns: {}, // For ball respawn countdowns
     frozenPaddles: {}, // For freezing paddles during countdown
-    stickyBalls: {}, // For balls stuck to paddles
     bricks: [],
     bricksRemaining: 0,
     bonuses: [],
@@ -169,6 +169,9 @@ let gameState = {
         left: {},
         right: {}
     },
+    ghostBalls: {}, // For balls with ghost effect
+    explosiveBalls: {}, // For balls with explosive effect
+    explosionAnimations: [], // For visual explosion effects
     effectDisplays: {
         left: [],
         right: []
@@ -422,24 +425,6 @@ document.addEventListener("keydown", (e) => {
         } else if (!gameState.paused) {
             gameState.keysPressed[e.key.toLowerCase()] = true;
             
-            // Release sticky balls with spacebar
-            if (e.key === ' ' || e.key === 'Spacebar') {
-                e.preventDefault();
-                Object.keys(gameState.stickyBalls).forEach(ballIndex => {
-                    const ball = gameState.balls[parseInt(ballIndex)];
-                    const stickyInfo = gameState.stickyBalls[ballIndex];
-                    
-                    // Release ball with appropriate direction
-                    if (stickyInfo.player === 'left') {
-                        ball.speedX = BASE_BALL_SPEED;
-                    } else {
-                        ball.speedX = -BASE_BALL_SPEED;
-                    }
-                    ball.speedY = (Math.random() - 0.5) * 4;
-                    
-                    delete gameState.stickyBalls[ballIndex];
-                });
-            }
         }
     }
 });
@@ -566,8 +551,11 @@ function resetGame() {
     clearBonuses();
     clearLasers();
     gameState.activeEffects = { left: {}, right: {} };
+    gameState.ghostBalls = {};
+    gameState.explosiveBalls = {};
+    clearExplosionAnimations();
     
-    // Clear effect displays and sticky balls
+    // Clear effect displays
     ['left', 'right'].forEach(player => {
         gameState.effectDisplays[player].forEach(display => {
             if (display.group && display.group.parentNode) {
@@ -576,7 +564,6 @@ function resetGame() {
         });
         gameState.effectDisplays[player] = [];
     });
-    gameState.stickyBalls = {};
     
     // Reset paddle sizes
     paddleLeft.setAttribute("height", PADDLE_HEIGHT);
@@ -600,6 +587,83 @@ function clearBonuses() {
 function clearLasers() {
     lasersContainer.innerHTML = '';
     gameState.lasers = [];
+}
+
+function clearExplosionAnimations() {
+    gameState.explosionAnimations.forEach(explosion => {
+        if (explosion.element && explosion.element.parentNode) {
+            explosion.element.remove();
+        }
+    });
+    gameState.explosionAnimations = [];
+}
+
+function createExplosionAnimation(centerX, centerY) {
+    // Create explosion group
+    const explosionGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    explosionGroup.setAttribute("id", `explosion-${Date.now()}`);
+    
+    // Create multiple concentric circles for explosion effect
+    const colors = ["#FFD700", "#FF6B00", "#FF0000", "#8B0000"];
+    const circles = [];
+    
+    for (let i = 0; i < 4; i++) {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", centerX);
+        circle.setAttribute("cy", centerY);
+        circle.setAttribute("r", "5"); // Start with visible radius
+        circle.setAttribute("fill", colors[i]);
+        circle.setAttribute("opacity", "0.8");
+        circle.setAttribute("stroke", "white");
+        circle.setAttribute("stroke-width", "1");
+        explosionGroup.appendChild(circle);
+        circles.push(circle);
+    }
+    
+    document.getElementById('game-svg').appendChild(explosionGroup);
+    
+    // Add to animations array
+    gameState.explosionAnimations.push({
+        element: explosionGroup,
+        circles: circles,
+        centerX: centerX,
+        centerY: centerY,
+        startTime: Date.now(),
+        maxRadius: 80,
+        duration: 600 // 0.6 seconds
+    });
+}
+
+function updateExplosionAnimations() {
+    const currentTime = Date.now();
+    
+    for (let i = gameState.explosionAnimations.length - 1; i >= 0; i--) {
+        const explosion = gameState.explosionAnimations[i];
+        const elapsed = currentTime - explosion.startTime;
+        const progress = elapsed / explosion.duration;
+        
+        if (progress >= 1) {
+            // Animation finished, remove it
+            if (explosion.element && explosion.element.parentNode) {
+                explosion.element.remove();
+            }
+            gameState.explosionAnimations.splice(i, 1);
+        } else {
+            // Update explosion animation
+            explosion.circles.forEach((circle, index) => {
+                const delay = index * 0.1; // Stagger the circles
+                const circleProgress = Math.max(0, (progress - delay) / (1 - delay));
+                
+                if (circleProgress > 0) {
+                    const radius = 5 + (circleProgress * explosion.maxRadius);
+                    const opacity = 0.8 * (1 - circleProgress); // Fade out as it expands
+                    
+                    circle.setAttribute("r", radius);
+                    circle.setAttribute("opacity", opacity);
+                }
+            });
+        }
+    }
 }
 
 function generateRandomBallSpeed() {
@@ -727,8 +791,6 @@ function updateAI() {
     const aiConfig = AI_CONFIG[gameConfig.difficulty];
     const currentTime = Date.now();
     
-    // Check if AI should release sticky balls
-    checkAIStickyBallRelease();
     
     // Update AI target with reaction time delay
     if (currentTime - gameState.lastAIUpdate > aiConfig.reactionTime) {
@@ -794,53 +856,108 @@ function updateAI() {
     gameState.paddleRightY = Math.max(0, Math.min(CONTAINER_HEIGHT - getRightPaddleHeight(), gameState.paddleRightY));
 }
 
-function checkAIStickyBallRelease() {
-    // Only check for AI players (right paddle in pvai and brick modes)
-    if (gameConfig.mode !== 'pvai' && gameConfig.mode !== 'brick') return;
+
+function updateGhostBallVisibility(ballIndex, ball) {
+    const ghostInfo = gameState.ghostBalls[ballIndex];
+    if (!ghostInfo) return;
     
-    // Check if AI has sticky balls
-    const aiStickyBalls = Object.keys(gameState.stickyBalls).filter(ballIndex => 
-        gameState.stickyBalls[ballIndex].player === 'right'
-    );
+    // Determine which paddle the ball is moving toward
+    const targetPaddle = ball.speedX > 0 ? 'right' : 'left';
+    const distanceToTarget = targetPaddle === 'right' 
+        ? CONTAINER_WIDTH - 20 - ball.x  // Distance to right paddle
+        : ball.x - 20;                   // Distance to left paddle
     
-    if (aiStickyBalls.length === 0) return;
+    const isVisible = ball.element.style.opacity !== '0';
     
-    // AI release strategy: wait a bit, then release when advantageous
-    const currentTime = Date.now();
-    
-    aiStickyBalls.forEach(ballIndex => {
-        const ball = gameState.balls[parseInt(ballIndex)];
-        const stickyInfo = gameState.stickyBalls[ballIndex];
-        
-        // Add timestamp when ball first got stuck
-        if (!stickyInfo.stuckTime) {
-            stickyInfo.stuckTime = currentTime;
+    if (distanceToTarget <= 150 && distanceToTarget > 50) {
+        // Ball should be invisible (ghost mode)
+        if (isVisible) {
+            ball.element.style.opacity = '0';
         }
-        
-        // AI decision factors
-        const timeSinceStuck = currentTime - stickyInfo.stuckTime;
-        const minHoldTime = 1000; // Hold for at least 1 second
-        const maxHoldTime = 3000; // Release within 3 seconds max
-        
-        // Release conditions
-        const shouldRelease = 
-            timeSinceStuck > maxHoldTime || // Force release after max time
-            (timeSinceStuck > minHoldTime && Math.random() < 0.3); // 30% chance per frame after min time
-        
-        if (shouldRelease) {
-            // Release the ball with proper angle based on paddle position
-            const stickyInfo = gameState.stickyBalls[ballIndex];
-            const paddleHeight = stickyInfo.player === 'left' ? getLeftPaddleHeight() : getRightPaddleHeight();
-            const hitPosition = (stickyInfo.offset + paddleHeight / 2) / paddleHeight; // 0 to 1
-            
-            ball.speedX = stickyInfo.player === 'left' ? BASE_BALL_SPEED : -BASE_BALL_SPEED;
-            ball.speedY = (hitPosition - 0.5) * 8; // Same logic as normal paddle collision
-            delete gameState.stickyBalls[ballIndex];
+    } else if (distanceToTarget <= 50) {
+        // Ball should be visible again
+        if (!isVisible) {
+            ball.element.style.opacity = '1';
+            // Remove ghost effect after one use
+            delete gameState.ghostBalls[ballIndex];
         }
-    });
+    }
 }
 
-function checkBrickCollision(ball) {
+function explodeBricks(centerX, centerY, explosionRadius, ballOwner) {
+    // Create visual explosion animation
+    createExplosionAnimation(centerX, centerY);
+    
+    const bricksToDestroy = [];
+    
+    for (let brick of gameState.bricks) {
+        if (!brick.destroyed) {
+            const brickCenterX = brick.x + brick.width / 2;
+            const brickCenterY = brick.y + brick.height / 2;
+            const distance = Math.sqrt(
+                Math.pow(brickCenterX - centerX, 2) + 
+                Math.pow(brickCenterY - centerY, 2)
+            );
+            
+            if (distance <= explosionRadius) {
+                bricksToDestroy.push(brick);
+            }
+        }
+    }
+    
+    // Destroy all bricks in explosion radius
+    bricksToDestroy.forEach(brick => {
+        brick.destroyed = true;
+        brick.element.style.display = 'none';
+        gameState.bricksRemaining--;
+        
+        // Award points for each destroyed brick
+        if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+            if (ballOwner === 'left') {
+                gameState.leftScore++;
+            } else if (ballOwner === 'right') {
+                gameState.rightScore++;
+            }
+        }
+        
+        // 10% chance to generate bonus for each destroyed brick
+        if (Math.random() < 0.1) {
+            generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, ballOwner);
+        }
+    });
+    
+    if (bricksToDestroy.length > 0) {
+        // Award bonus points if this explosion destroyed the last brick(s)
+        if (gameState.bricksRemaining === 0 && (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick')) {
+            if (ballOwner === 'left') {
+                gameState.leftScore += 10;
+            } else if (ballOwner === 'right') {
+                gameState.rightScore += 10;
+            }
+        }
+        
+        updateScore();
+        
+        // Check if all bricks are destroyed
+        if (gameState.bricksRemaining === 0) {
+            if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                if (gameState.leftScore > gameState.rightScore) {
+                    gameOver("Player 1");
+                } else if (gameState.rightScore > gameState.leftScore) {
+                    gameOver("Player 2");
+                } else {
+                    gameOver("Draw");
+                }
+            } else {
+                gameOver("All Bricks Destroyed!");
+            }
+        }
+    }
+    
+    return bricksToDestroy.length;
+}
+
+function checkBrickCollision(ball, ballIndex) {
     const nextBallX = ball.x + ball.speedX;
     const nextBallY = ball.y + ball.speedY;
     
@@ -852,24 +969,43 @@ function checkBrickCollision(ball) {
                 nextBallY + BALL_RADIUS >= brick.y &&
                 nextBallY - BALL_RADIUS <= brick.y + brick.height) {
                 
-                // Destroy brick
-                brick.destroyed = true;
-                brick.element.style.display = 'none';
-                gameState.bricksRemaining--;
-                
-                // Generate bonus with 10% chance
-                if (Math.random() < 0.1) {
-                    generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, ball.owner);
-                }
-                
-                // Award points based on ball ownership (both brick modes)
-                if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
-                    if (ball.owner === 'left') {
-                        gameState.leftScore++;
-                    } else if (ball.owner === 'right') {
-                        gameState.rightScore++;
+                // Check if ball has explosive effect
+                const explosiveInfo = gameState.explosiveBalls[ballIndex];
+                if (explosiveInfo) {
+                    // Explosive collision - destroy multiple bricks
+                    const brickCenterX = brick.x + brick.width / 2;
+                    const brickCenterY = brick.y + brick.height / 2;
+                    explodeBricks(brickCenterX, brickCenterY, 60, ball.owner); // 60px explosion radius
+                } else {
+                    // Normal collision - destroy single brick
+                    brick.destroyed = true;
+                    brick.element.style.display = 'none';
+                    gameState.bricksRemaining--;
+                    
+                    // Generate bonus with 10% chance
+                    if (Math.random() < 0.1) {
+                        generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, ball.owner);
                     }
-                    updateScore();
+                    
+                    // Award points based on ball ownership (both brick modes)
+                    if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                        if (ball.owner === 'left') {
+                            gameState.leftScore++;
+                        } else if (ball.owner === 'right') {
+                            gameState.rightScore++;
+                        }
+                        
+                        // Award bonus points if this was the last brick
+                        if (gameState.bricksRemaining === 0) {
+                            if (ball.owner === 'left') {
+                                gameState.leftScore += 10;
+                            } else if (ball.owner === 'right') {
+                                gameState.rightScore += 10;
+                            }
+                        }
+                        
+                        updateScore();
+                    }
                 }
                 
                 // Determine collision side more accurately
@@ -906,8 +1042,8 @@ function checkBrickCollision(ball) {
                     }
                 }
                 
-                // Check if all bricks are destroyed
-                if (gameState.bricksRemaining === 0) {
+                // Check if all bricks are destroyed (only for non-explosive collisions)
+                if (!explosiveInfo && gameState.bricksRemaining === 0) {
                     if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
                         // Determine winner based on score
                         if (gameState.leftScore > gameState.rightScore) {
@@ -935,23 +1071,12 @@ function updateBalls() {
         
         if (!ball.active) continue;
         
+        // Handle ghost ball visibility
+        updateGhostBallVisibility(i, ball);
+        
         ball.x += ball.speedX;
         ball.y += ball.speedY;
         
-        // Handle sticky balls - override normal movement
-        if (gameState.stickyBalls[i]) {
-            const stickyInfo = gameState.stickyBalls[i];
-            if (stickyInfo.player === 'left') {
-                ball.x = 20 + BALL_RADIUS;
-                ball.y = gameState.paddleLeftY + getLeftPaddleHeight() / 2 + stickyInfo.offset;
-            } else {
-                ball.x = CONTAINER_WIDTH - 20 - BALL_RADIUS;
-                ball.y = gameState.paddleRightY + getRightPaddleHeight() / 2 + stickyInfo.offset;
-            }
-            // Skip normal collision detection for sticky balls
-            setBallPosition(ball.element, ball.x, ball.y);
-            continue;
-        }
         
         // Top and bottom collision
         if (ball.y - BALL_RADIUS <= 0 || ball.y + BALL_RADIUS >= CONTAINER_HEIGHT) {
@@ -961,10 +1086,9 @@ function updateBalls() {
         
         // Check brick collisions in brick modes (before updating position)
         if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-            if (checkBrickCollision(ball)) {
+            if (checkBrickCollision(ball, i)) {
                 // If collision occurred, don't update ball position this frame
-                ball.element.setAttribute("cx", ball.x);
-                ball.element.setAttribute("cy", ball.y);
+                setBallPosition(ball.element, ball.x, ball.y);
                 continue;
             }
         }
@@ -985,23 +1109,12 @@ function updateBalls() {
                 
                 ball.owner = player; // Update ownership
                 
-                // Check for sticky paddle effect
-                if (gameState.activeEffects[player].sticky) {
-                    // Stick ball to paddle
-                    gameState.stickyBalls[i] = {
-                        player: player,
-                        offset: ball.y - (paddleY + paddleHeight / 2)
-                    };
-                    ball.speedX = 0;
-                    ball.speedY = 0;
-                } else {
-                    // Normal bounce
-                    ball.speedX *= -1;
-                    ball.x = isLeft ? paddleX + BALL_RADIUS : paddleX - BALL_RADIUS;
-                    // Add spin based on where ball hits paddle
-                    const hitPosition = (ball.y - paddleY) / paddleHeight;
-                    ball.speedY = (hitPosition - 0.5) * 8;
-                }
+                // Normal bounce
+                ball.speedX *= -1;
+                ball.x = isLeft ? paddleX + BALL_RADIUS : paddleX - BALL_RADIUS;
+                // Add spin based on where ball hits paddle
+                const hitPosition = (ball.y - paddleY) / paddleHeight;
+                ball.speedY = (hitPosition - 0.5) * 8;
                 return true;
             }
             return false;
@@ -1129,6 +1242,7 @@ function gameLoop() {
         updateAutoLasers();
         updateCountdowns();
         updateEffects();
+        updateExplosionAnimations();
         requestAnimationFrame(gameLoop);
     }
 }
@@ -1356,14 +1470,15 @@ function getEffectIcon(effectType) {
         case 'multiBall': return '🎱';
         case 'laser': return '🔫';
         case 'slowBall': return '🐢';
-        case 'sticky': return '🧲';
+        case 'explosiveBall': return '💥';
+        case 'ghostWarning': return '👻';
         default: return '❓';
     }
 }
 
 function isEffectDebuff(effectType) {
-    // Slow ball is the only debuff currently
-    return effectType === 'slowBall';
+    // Slow ball and ghost warning are debuffs/warnings
+    return effectType === 'slowBall' || effectType === 'ghostWarning';
 }
 
 function getEffectDisplayName(effectType) {
@@ -1372,7 +1487,8 @@ function getEffectDisplayName(effectType) {
         case 'multiBall': return '🎱 Multi';
         case 'laser': return '🔫 Laser';
         case 'slowBall': return '🐢 Slow';
-        case 'sticky': return '🧲 Sticky';
+        case 'explosiveBall': return '💥 Boom';
+        case 'ghostWarning': return '👻 Ghost';
         default: return effectType;
     }
 }
@@ -1383,7 +1499,8 @@ function getEffectColor(effectType) {
         case 'multiBall': return '#2196F3';
         case 'laser': return '#FF5722';
         case 'slowBall': return '#9C27B0';
-        case 'sticky': return '#FF9800';
+        case 'explosiveBall': return '#E91E63';
+        case 'ghostWarning': return '#607D8B';
         default: return '#FFF';
     }
 }
@@ -1442,7 +1559,8 @@ function getBonusColor(type) {
         case BONUS_TYPES.MULTI_BALL: return '#2196F3';
         case BONUS_TYPES.LASER_PADDLE: return '#FF5722';
         case BONUS_TYPES.SLOW_BALL: return '#9C27B0';
-        case BONUS_TYPES.STICKY_PADDLE: return '#FF9800';
+        case BONUS_TYPES.GHOST_BALL: return '#607D8B';
+        case BONUS_TYPES.EXPLOSIVE_BALL: return '#E91E63';
         default: return '#FFF';
     }
 }
@@ -1453,7 +1571,8 @@ function getBonusIcon(type) {
         case BONUS_TYPES.MULTI_BALL: return '🎱';
         case BONUS_TYPES.LASER_PADDLE: return '🔫';
         case BONUS_TYPES.SLOW_BALL: return '🐢';
-        case BONUS_TYPES.STICKY_PADDLE: return '🧲';
+        case BONUS_TYPES.GHOST_BALL: return '👻';
+        case BONUS_TYPES.EXPLOSIVE_BALL: return '💥';
         default: return '?';
     }
 }
@@ -1574,18 +1693,33 @@ function applyBonus(type, player) {
             applySlowBall(player);
             break;
             
-        case BONUS_TYPES.STICKY_PADDLE:
-            if (effects.sticky) {
+        case BONUS_TYPES.GHOST_BALL:
+            // Apply ghost effect to one of the player's balls
+            applyGhostBall(player);
+            
+            // Show temporary indicator on opponent that a ghost ball is incoming
+            const ghostOpponentSide = player === 'left' ? 'right' : 'left';
+            const ghostOpponentEffects = gameState.activeEffects[ghostOpponentSide];
+            ghostOpponentEffects.ghostWarning = {
+                duration: 3000, // 3 seconds warning
+                startTime: Date.now()
+            };
+            break;
+            
+        case BONUS_TYPES.EXPLOSIVE_BALL:
+            if (effects.explosiveBall) {
                 // Extend existing effect
-                effects.sticky.duration += 20000;
+                effects.explosiveBall.duration += 10000;
             } else {
                 // Create new effect
-                effects.sticky = {
-                    duration: 20000,
+                effects.explosiveBall = {
+                    duration: 10000, // 10 seconds
                     startTime: Date.now()
                 };
             }
+            applyExplosiveBall(player);
             break;
+            
     }
 }
 
@@ -1692,6 +1826,42 @@ function applySlowBall(player) {
     }
 }
 
+function applyGhostBall(player) {
+    // Find an active ball belonging to this player to make ghostly
+    const playerBalls = gameState.balls
+        .map((ball, index) => ({ball, index}))
+        .filter(({ball}) => ball.active && ball.owner === player);
+    
+    if (playerBalls.length > 0) {
+        // Pick a random ball from the player's balls
+        const randomBall = playerBalls[Math.floor(Math.random() * playerBalls.length)];
+        
+        // Apply ghost effect (one-time use)
+        gameState.ghostBalls[randomBall.index] = {
+            player: player,
+            applied: false
+        };
+    }
+}
+
+function applyExplosiveBall(player) {
+    // Find an active ball belonging to this player to make explosive
+    const playerBalls = gameState.balls
+        .map((ball, index) => ({ball, index}))
+        .filter(({ball}) => ball.active && ball.owner === player);
+    
+    if (playerBalls.length > 0) {
+        // Pick a random ball from the player's balls
+        const randomBall = playerBalls[Math.floor(Math.random() * playerBalls.length)];
+        
+        // Apply explosive effect (temporary)
+        gameState.explosiveBalls[randomBall.index] = {
+            player: player,
+            startTime: Date.now()
+        };
+    }
+}
+
 function updateEffects() {
     // Update left paddle effects
     updatePaddleSize('left');
@@ -1711,6 +1881,19 @@ function updateEffects() {
             }
         }
     }
+    
+    // Clean up expired explosive balls
+    const currentTime = Date.now();
+    Object.keys(gameState.explosiveBalls).forEach(ballIndex => {
+        const explosiveInfo = gameState.explosiveBalls[ballIndex];
+        const player = explosiveInfo.player;
+        const playerEffects = gameState.activeEffects[player];
+        
+        if (!playerEffects.explosiveBall || 
+            currentTime - playerEffects.explosiveBall.startTime >= playerEffects.explosiveBall.duration) {
+            delete gameState.explosiveBalls[ballIndex];
+        }
+    });
     
     // Restore ball speed if slow effect expired
     if (!gameState.activeEffects.left.slowBall && !gameState.activeEffects.right.slowBall) {
@@ -1797,6 +1980,26 @@ function checkLaserBrickCollision(laser) {
             // Generate bonus with 10% chance
             if (Math.random() < 0.1) {
                 generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, laser.owner);
+            }
+            
+            // Award points based on laser ownership (both brick modes)
+            if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                if (laser.owner === 'left') {
+                    gameState.leftScore++;
+                } else if (laser.owner === 'right') {
+                    gameState.rightScore++;
+                }
+                
+                // Award bonus points if this was the last brick
+                if (gameState.bricksRemaining === 0) {
+                    if (laser.owner === 'left') {
+                        gameState.leftScore += 10;
+                    } else if (laser.owner === 'right') {
+                        gameState.rightScore += 10;
+                    }
+                }
+                
+                updateScore();
             }
             
             // Check if all bricks are destroyed
