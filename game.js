@@ -546,6 +546,27 @@ function resetGame() {
     gameState.rightScore = 0;
     gameState.paddleLeftY = 160;
     gameState.paddleRightY = 160;
+    
+    // Reset ball configuration based on game mode
+    // First, remove any extra balls created by multi-ball bonus
+    while (gameState.balls.length > 2) {
+        const extraBall = gameState.balls.pop();
+        if (extraBall.element && extraBall.element.parentNode) {
+            extraBall.element.remove();
+        }
+    }
+    
+    // Then configure the 2 main balls based on mode
+    if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
+        // Both brick modes: 2 balls
+        ball2.style.display = 'block';
+        gameState.balls[1].active = true;
+    } else {
+        // Standard pong modes: 1 ball only
+        ball2.style.display = 'none';
+        gameState.balls[1].active = false;
+    }
+    
     resetBalls();
     updateScore();
     
@@ -753,7 +774,7 @@ function updatePaddles() {
         const frozen = gameState.frozenPaddles[player] && currentTime < gameState.frozenPaddles[player];
         
         if (!frozen) {
-            // Check if player has slow effect applied
+            // Check if player has slow effect applied (stored in their effects when opponent catches slow bonus)
             const playerEffects = gameState.activeEffects[player];
             const slowEffect = playerEffects.slowBall && 
                               (currentTime - playerEffects.slowBall.startTime < playerEffects.slowBall.duration);
@@ -761,7 +782,6 @@ function updatePaddles() {
             
             // Debug: log when human player is slowed
             if (slowEffect && Math.random() < 0.02) { // Log occasionally to avoid spam
-                console.log(`🐢 Player ${player} is slowed! Original speed: ${BASE_PADDLE_SPEED}, Current speed: ${paddleSpeed}`);
             }
             
             // Check if player has reverse controls effect applied
@@ -823,8 +843,18 @@ function updateAI() {
         let closestBall = null;
         let closestDistance = Infinity;
         
-        for (let ball of gameState.balls) {
+        for (let i = 0; i < gameState.balls.length; i++) {
+            const ball = gameState.balls[i];
             if (ball.active && ball.speedX > 0) { // Ball moving toward AI paddle
+                // AI levels 1-3 cannot see invisible ghost balls
+                const isGhostBall = gameState.ghostBalls[i];
+                const isInvisible = ball.element.style.opacity === '0';
+                const canSeeGhostBalls = gameConfig.difficulty >= 4;
+                
+                if (isGhostBall && isInvisible && !canSeeGhostBalls) {
+                    continue; // AI can't see this ball
+                }
+                
                 const distance = CONTAINER_WIDTH - ball.x;
                 if (distance < closestDistance) {
                     closestDistance = distance;
@@ -875,7 +905,6 @@ function updateAI() {
     
     // Debug: log when AI is slowed
     if (aiSlowEffect && Math.random() < 0.01) { // Log occasionally to avoid spam
-        console.log(`🐢 AI is slowed! Original speed: ${aiConfig.speed}, Current speed: ${aiSpeed}`);
     }
     
     if (Math.abs(paddleCenterY - targetCenterY) > 5) {
@@ -903,12 +932,12 @@ function updateGhostBallVisibility(ballIndex, ball) {
     
     const isVisible = ball.element.style.opacity !== '0';
     
-    if (distanceToTarget <= 150 && distanceToTarget > 50) {
+    if (distanceToTarget <= 200 && distanceToTarget > 100) {
         // Ball should be invisible (ghost mode)
         if (isVisible) {
             ball.element.style.opacity = '0';
         }
-    } else if (distanceToTarget <= 50) {
+    } else if (distanceToTarget <= 100) {
         // Ball should be visible again
         if (!isVisible) {
             ball.element.style.opacity = '1';
@@ -1758,16 +1787,14 @@ function applyBonus(type, player) {
             if (opponentEffects.slowBall) {
                 // Extend existing effect on opponent
                 opponentEffects.slowBall.duration += 7000;
-                console.log(`🐢 Extended slow effect on ${opponentSide}`);
             } else {
                 // Create new effect on opponent
                 opponentEffects.slowBall = {
                     duration: 7000,
                     startTime: Date.now()
                 };
-                console.log(`🐢 New slow effect on ${opponentSide}, duration: 7000ms`);
             }
-            applySlowBall(opponentSide); // Fixed: should be opponentSide, not player
+            applySlowBall(opponentSide);
             break;
             
         case BONUS_TYPES.GHOST_BALL:
@@ -1897,8 +1924,8 @@ function updatePaddleColor(player) {
                          (currentTime - effects.reverseControls.startTime < effects.reverseControls.duration);
     
     if (reverseEffect) {
-        // Color paddle red when reverse controls is active
-        paddle.style.filter = 'hue-rotate(0deg) saturate(2) brightness(0.8) sepia(1) hue-rotate(-50deg)';
+        // Color paddle bright red when reverse controls is active
+        paddle.style.filter = 'sepia(1) saturate(5) hue-rotate(320deg) brightness(1.2)';
     } else {
         // Reset to normal color
         paddle.style.filter = '';
@@ -1957,14 +1984,15 @@ function createMultiBall(player) {
     setBallPosition(newBall.element, newBall.x, newBall.y);
 }
 
-function applySlowBall(player) {
+function applySlowBall(opponentSide) {
     // Slow down opponent's balls only
-    const opponentSide = player === 'left' ? 'right' : 'left';
+    
     
     for (let ball of gameState.balls) {
         if (ball.active && ball.owner === opponentSide) {
             // Only slow down if not already slowed (prevent multiple applications)
             const currentSpeed = Math.sqrt(ball.speedX ** 2 + ball.speedY ** 2);
+            console.log(`🐢 Slowing ball owned by ${ball.owner}, speed: ${currentSpeed} -> ${currentSpeed * 0.5}`);
             if (currentSpeed > BASE_BALL_SPEED * 0.6) {
                 ball.speedX *= 0.5;
                 ball.speedY *= 0.5;
