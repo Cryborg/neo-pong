@@ -91,17 +91,22 @@
     <!-- Game Container -->
     <div id="game-container" class="hidden">
         <div id="scoreboard">0 : 0</div>
+        
+        <!-- Effect displays outside canvas -->
+        <div id="effects-left" class="effects-container left"></div>
+        <div id="effects-right" class="effects-container right"></div>
+        
         <svg id="game-svg" viewBox="0 0 800 400">
             <!-- Middle dashed line -->
-            <line x1="400" y1="0" x2="400" y2="400" stroke="white" stroke-width="2" stroke-dasharray="10,10" opacity="0.3"/>
+            <image id="middle-line" x="399" y="0" width="2" height="400" href="icons/middle-line.svg"/>
             
             <!-- Paddles -->
-            <rect id="paddle-left" x="10" y="160" width="10" height="80" fill="white"/>
-            <rect id="paddle-right" x="780" y="160" width="10" height="80" fill="white"/>
+            <image id="paddle-left" x="10" y="160" width="10" height="80" href="icons/paddle.svg"/>
+            <image id="paddle-right" x="780" y="160" width="10" height="80" href="icons/paddle.svg"/>
             
             <!-- Balls -->
-            <circle id="ball" cx="400" cy="200" r="6" fill="white"/>
-            <circle id="ball2" cx="400" cy="200" r="6" fill="white" style="display: none;"/>
+            <image id="ball" x="394" y="194" width="12" height="12" href="icons/ball.svg"/>
+            <image id="ball2" x="394" y="194" width="12" height="12" href="icons/ball.svg" style="display: none;"/>
             
             <!-- Bricks container for brick mode -->
             <g id="bricks-container"></g>
@@ -112,6 +117,16 @@
             <!-- Lasers container -->
             <g id="lasers-container"></g>
         </svg>
+    </div>
+    
+    <!-- Pause Screen -->
+    <div id="pause-screen" class="hidden">
+        <h2>Game Paused</h2>
+        <div class="button-group">
+            <button class="game-button play-again-button" id="resume-game">Resume</button>
+            <button class="game-button menu-button" id="restart-game">Restart</button>
+            <button class="game-button menu-button" id="pause-back-to-menu">Back to Menu</button>
+        </div>
     </div>
     
     <!-- Game Over Screen -->

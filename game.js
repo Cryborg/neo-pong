@@ -20,6 +20,12 @@ const fieldWidthSelect = document.getElementById("field-width");
 const backgroundPreview = document.getElementById("background-preview");
 const bonusesContainer = document.getElementById("bonuses-container");
 const lasersContainer = document.getElementById("lasers-container");
+const pauseScreen = document.getElementById("pause-screen");
+const resumeButton = document.getElementById("resume-game");
+const restartButton = document.getElementById("restart-game");
+const pauseBackToMenuButton = document.getElementById("pause-back-to-menu");
+const effectsLeft = document.getElementById("effects-left");
+const effectsRight = document.getElementById("effects-right");
 
 // Constants
 const CONTAINER_HEIGHT = 400;
@@ -34,20 +40,48 @@ const BRICK_HEIGHT = 45;
 const BRICK_ROWS = 6;
 const BRICK_PADDING = 5;
 
-// Game Configuration
-let gameConfig = {
-    mode: 'pvp', // 'pvp', 'pvai', or 'brick'
-    difficulty: 3,
-    maxScore: 10,
-    fieldWidth: 800,
-    p1Keys: {
-        up: 'a',
-        down: 'q'
-    },
-    p2Keys: {
-        up: 'arrowup',
-        down: 'arrowdown'
+// Game Configuration with localStorage support
+function loadGameConfig() {
+    const saved = localStorage.getItem('pongGameConfig');
+    if (saved) {
+        try {
+            return JSON.parse(saved);
+        } catch (e) {
+            console.warn('Failed to parse saved config, using defaults');
+        }
     }
+    
+    // Default configuration
+    return {
+        mode: 'pvp', // 'pvp', 'pvai', or 'brick'
+        difficulty: 3,
+        maxScore: 10,
+        fieldWidth: 800,
+        p1Keys: {
+            up: 'a',
+            down: 'q'
+        },
+        p2Keys: {
+            up: 'arrowup',
+            down: 'arrowdown'
+        }
+    };
+}
+
+function saveGameConfig() {
+    try {
+        localStorage.setItem('pongGameConfig', JSON.stringify(gameConfig));
+    } catch (e) {
+        console.warn('Failed to save config to localStorage');
+    }
+}
+
+let gameConfig = loadGameConfig();
+
+// Menu navigation state
+let menuState = {
+    focusedElement: null,
+    navigableElements: []
 };
 
 // AI Configuration by difficulty level
@@ -67,6 +101,31 @@ const BONUS_TYPES = {
     SLOW_BALL: 'slow_ball',
     STICKY_PADDLE: 'sticky_paddle'
 };
+
+// Helper functions for SVG positioning
+function setBallPosition(ballElement, x, y) {
+    // For SVG <image> elements, position from top-left corner
+    ballElement.setAttribute("x", x - BALL_RADIUS);
+    ballElement.setAttribute("y", y - BALL_RADIUS);
+}
+
+function setPaddlePosition(paddleElement, x, y) {
+    paddleElement.setAttribute("x", x);
+    paddleElement.setAttribute("y", y);
+}
+
+// Helper functions for paddle dimensions
+function getLeftPaddleHeight() {
+    return parseInt(paddleLeft.getAttribute("height")) || PADDLE_HEIGHT;
+}
+
+function getRightPaddleHeight() {
+    return parseInt(paddleRight.getAttribute("height")) || PADDLE_HEIGHT;
+}
+
+function getPaddleHeight(player) {
+    return player === 'left' ? getLeftPaddleHeight() : getRightPaddleHeight();
+}
 
 // Game State
 let gameState = {
@@ -98,6 +157,7 @@ let gameState = {
     lastAIUpdate: 0,
     aiTargetY: 200,
     gameRunning: false,
+    paused: false,
     countdowns: {}, // For ball respawn countdowns
     frozenPaddles: {}, // For freezing paddles during countdown
     stickyBalls: {}, // For balls stuck to paddles
@@ -159,8 +219,152 @@ function updateFieldPreview() {
     }
 }
 
-// Initialize preview
+// Apply saved configuration to form elements
+function applyConfigToForm() {
+    // Set game mode
+    const modeRadio = document.querySelector(`input[name="gameMode"][value="${gameConfig.mode}"]`);
+    if (modeRadio) {
+        modeRadio.checked = true;
+        // Trigger change event to update UI
+        modeRadio.dispatchEvent(new Event('change'));
+    }
+    
+    // Set difficulty
+    const difficultySelect = document.getElementById('difficulty');
+    if (difficultySelect) {
+        difficultySelect.value = gameConfig.difficulty.toString();
+    }
+    
+    // Set max score
+    const maxScoreSelect = document.getElementById('max-score');
+    if (maxScoreSelect) {
+        maxScoreSelect.value = gameConfig.maxScore.toString();
+    }
+    
+    // Set field width
+    if (fieldWidthSelect) {
+        fieldWidthSelect.value = gameConfig.fieldWidth.toString();
+    }
+    
+    // Set player 1 keys
+    const p1UpInput = document.getElementById('p1-up');
+    const p1DownInput = document.getElementById('p1-down');
+    if (p1UpInput) p1UpInput.value = gameConfig.p1Keys.up.toUpperCase();
+    if (p1DownInput) p1DownInput.value = gameConfig.p1Keys.down.toUpperCase();
+}
+
+// Menu keyboard navigation functions
+function initMenuNavigation() {
+    // Get all navigable elements in order
+    menuState.navigableElements = [
+        ...document.querySelectorAll('input[name="gameMode"]'),
+        document.getElementById('difficulty'),
+        document.getElementById('max-score'),
+        document.getElementById('field-width'),
+        document.getElementById('p1-up'),
+        document.getElementById('p1-down'),
+        document.getElementById('start-button')
+    ].filter(el => el && !el.closest('#p2-controls-section, #difficulty-section')?.style.display === 'none');
+    
+    // Set initial focus
+    if (menuState.navigableElements.length > 0) {
+        setMenuFocus(0);
+    }
+}
+
+function setMenuFocus(index) {
+    // Remove previous focus
+    if (menuState.focusedElement) {
+        menuState.focusedElement.classList.remove('menu-focused');
+    }
+    
+    // Set new focus
+    if (index >= 0 && index < menuState.navigableElements.length) {
+        menuState.focusedElement = menuState.navigableElements[index];
+        menuState.focusedElement.classList.add('menu-focused');
+        menuState.focusedElement.focus();
+    }
+}
+
+function navigateMenu(direction) {
+    if (!menuState.focusedElement) {
+        initMenuNavigation();
+        return;
+    }
+    
+    const currentIndex = menuState.navigableElements.indexOf(menuState.focusedElement);
+    if (currentIndex === -1) return;
+    
+    let newIndex;
+    if (direction === 'up') {
+        newIndex = currentIndex > 0 ? currentIndex - 1 : menuState.navigableElements.length - 1;
+    } else if (direction === 'down') {
+        newIndex = currentIndex < menuState.navigableElements.length - 1 ? currentIndex + 1 : 0;
+    }
+    
+    setMenuFocus(newIndex);
+}
+
+function activateMenuElement() {
+    if (!menuState.focusedElement) return;
+    
+    const element = menuState.focusedElement;
+    
+    if (element.type === 'radio') {
+        element.checked = true;
+        element.dispatchEvent(new Event('change'));
+    } else if (element.tagName === 'SELECT') {
+        // For selects, cycle through options
+        const currentIndex = element.selectedIndex;
+        const nextIndex = (currentIndex + 1) % element.options.length;
+        element.selectedIndex = nextIndex;
+        element.dispatchEvent(new Event('change'));
+    } else if (element.tagName === 'BUTTON') {
+        element.click();
+    } else if (element.type === 'text') {
+        // For text inputs, enter edit mode (they're already focused)
+        element.select();
+    }
+}
+
+// Initialize preview and apply saved config
 updateFieldPreview();
+applyConfigToForm();
+initMenuNavigation();
+
+// Add keyboard navigation for configuration menu
+document.addEventListener('keydown', (e) => {
+    // Only handle keys when config screen is visible
+    if (!configScreen.classList.contains('hidden')) {
+        switch(e.key) {
+            case 'ArrowUp':
+                e.preventDefault();
+                navigateMenu('up');
+                break;
+            case 'ArrowDown':
+                e.preventDefault();
+                navigateMenu('down');
+                break;
+            case 'Enter':
+                e.preventDefault();
+                // If no element is focused or start button is focused, start the game
+                if (!menuState.focusedElement || menuState.focusedElement === startButton) {
+                    startGame();
+                } else {
+                    activateMenuElement();
+                }
+                break;
+            case 'Escape':
+                // Clear focus
+                if (menuState.focusedElement) {
+                    menuState.focusedElement.classList.remove('menu-focused');
+                    menuState.focusedElement.blur();
+                    menuState.focusedElement = null;
+                }
+                break;
+        }
+    }
+});
 
 startButton.addEventListener('click', startGame);
 playAgainButton.addEventListener('click', () => {
@@ -177,34 +381,72 @@ backToMenuButton.addEventListener('click', () => {
     gameState.gameRunning = false;
 });
 
+// Pause functionality
+resumeButton.addEventListener('click', () => {
+    gameState.paused = false;
+    pauseScreen.classList.add('hidden');
+    gameLoop();
+});
+
+restartButton.addEventListener('click', () => {
+    gameState.paused = false;
+    pauseScreen.classList.add('hidden');
+    resetGame();
+    gameState.gameRunning = true;
+    gameLoop();
+});
+
+pauseBackToMenuButton.addEventListener('click', () => {
+    gameState.paused = false;
+    gameState.gameRunning = false;
+    pauseScreen.classList.add('hidden');
+    gameContainer.classList.add('hidden');
+    configScreen.classList.remove('hidden');
+    backgroundPreview.classList.remove('hidden');
+});
+
 // Keyboard event listeners
 document.addEventListener("keydown", (e) => {
     if (gameState.gameRunning) {
-        gameState.keysPressed[e.key.toLowerCase()] = true;
-        
-        // Release sticky balls with spacebar
-        if (e.key === ' ' || e.key === 'Spacebar') {
-            e.preventDefault();
-            Object.keys(gameState.stickyBalls).forEach(ballIndex => {
-                const ball = gameState.balls[parseInt(ballIndex)];
-                const stickyInfo = gameState.stickyBalls[ballIndex];
-                
-                // Release ball with appropriate direction
-                if (stickyInfo.player === 'left') {
-                    ball.speedX = BASE_BALL_SPEED;
-                } else {
-                    ball.speedX = -BASE_BALL_SPEED;
-                }
-                ball.speedY = (Math.random() - 0.5) * 4;
-                
-                delete gameState.stickyBalls[ballIndex];
-            });
+        // Handle pause with Escape key
+        if (e.key === 'Escape') {
+            if (gameState.paused) {
+                gameState.paused = false;
+                pauseScreen.classList.add('hidden');
+                gameLoop();
+            } else {
+                gameState.paused = true;
+                pauseScreen.classList.remove('hidden');
+            }
+        } else if (!gameState.paused) {
+            gameState.keysPressed[e.key.toLowerCase()] = true;
+            
+            // Release sticky balls with spacebar
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                Object.keys(gameState.stickyBalls).forEach(ballIndex => {
+                    const ball = gameState.balls[parseInt(ballIndex)];
+                    const stickyInfo = gameState.stickyBalls[ballIndex];
+                    
+                    // Release ball with appropriate direction
+                    if (stickyInfo.player === 'left') {
+                        ball.speedX = BASE_BALL_SPEED;
+                    } else {
+                        ball.speedX = -BASE_BALL_SPEED;
+                    }
+                    ball.speedY = (Math.random() - 0.5) * 4;
+                    
+                    delete gameState.stickyBalls[ballIndex];
+                });
+            }
         }
     }
 });
 
 document.addEventListener("keyup", (e) => {
-    gameState.keysPressed[e.key.toLowerCase()] = false;
+    if (!gameState.paused) {
+        gameState.keysPressed[e.key.toLowerCase()] = false;
+    }
 });
 
 function startGame() {
@@ -216,18 +458,20 @@ function startGame() {
     gameConfig.p1Keys.up = document.getElementById('p1-up').value.toLowerCase();
     gameConfig.p1Keys.down = document.getElementById('p1-down').value.toLowerCase();
     
+    // Save configuration to localStorage
+    saveGameConfig();
+    
     // Update game dimensions
     CONTAINER_WIDTH = gameConfig.fieldWidth;
     gameContainer.style.width = `${CONTAINER_WIDTH}px`;
     document.getElementById('game-svg').setAttribute('viewBox', `0 0 ${CONTAINER_WIDTH} ${CONTAINER_HEIGHT}`);
     
     // Update middle line
-    const middleLine = document.querySelector('#game-svg line');
-    middleLine.setAttribute('x1', CONTAINER_WIDTH / 2);
-    middleLine.setAttribute('x2', CONTAINER_WIDTH / 2);
+    const middleLine = document.getElementById('middle-line');
+    middleLine.setAttribute('x', (CONTAINER_WIDTH / 2) - 1);
     
     // Update right paddle position
-    paddleRight.setAttribute("x", CONTAINER_WIDTH - 20);
+    setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
     
     // Hide config screen and background preview, show game
     configScreen.classList.add('hidden');
@@ -338,8 +582,8 @@ function resetGame() {
     paddleRight.setAttribute("height", PADDLE_HEIGHT);
     
     // Apply initial paddle positions
-    paddleLeft.setAttribute("y", gameState.paddleLeftY);
-    paddleRight.setAttribute("y", gameState.paddleRightY);
+    setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
+    setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
     
     // Reset bricks if in brick mode
     if ((gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') && gameState.bricksRemaining === 0) {
@@ -363,13 +607,23 @@ function resetBalls() {
         gameState.balls[0].x = 30; // Start from left paddle
         gameState.balls[0].y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
         gameState.balls[0].speedX = BASE_BALL_SPEED;
-        gameState.balls[0].speedY = Math.random() > 0.5 ? 3 : -3;
+        // Random angle but not too vertical (between -6 and 6, avoiding very small values)
+        let randomY = (Math.random() - 0.5) * 12; // -6 to 6
+        if (Math.abs(randomY) < 2) {
+            randomY = randomY < 0 ? -2 : 2; // Ensure minimum angle
+        }
+        gameState.balls[0].speedY = randomY;
         gameState.balls[0].owner = 'left';
         
         gameState.balls[1].x = CONTAINER_WIDTH - 30; // Start from right paddle
         gameState.balls[1].y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
         gameState.balls[1].speedX = -BASE_BALL_SPEED;
-        gameState.balls[1].speedY = Math.random() > 0.5 ? 3 : -3;
+        // Random angle but not too vertical
+        let randomY1 = (Math.random() - 0.5) * 12; // -6 to 6
+        if (Math.abs(randomY1) < 2) {
+            randomY1 = randomY1 < 0 ? -2 : 2; // Ensure minimum angle
+        }
+        gameState.balls[1].speedY = randomY1;
         gameState.balls[1].owner = 'right';
     } else {
         // Single ball mode (standard pong)
@@ -393,27 +647,50 @@ function resetBalls() {
             gameState.balls[0].owner = 'right';
         }
         
-        gameState.balls[0].speedY = Math.random() > 0.5 ? 3 : -3;
+        // Random angle but not too vertical
+        let randomY = (Math.random() - 0.5) * 12; // -6 to 6
+        if (Math.abs(randomY) < 2) {
+            randomY = randomY < 0 ? -2 : 2; // Ensure minimum angle
+        }
+        gameState.balls[0].speedY = randomY;
     }
 }
 
-function resetSingleBall(ballIndex) {
+function resetSingleBall(ballIndex, losingPlayer = null) {
     // Reset a single ball (used when it goes out of bounds)
     const ball = gameState.balls[ballIndex];
-    console.log(`DEBUG: resetSingleBall called for ball ${ballIndex}`);
+    console.log(`DEBUG: resetSingleBall called for ball ${ballIndex}, losing player: ${losingPlayer}`);
     
     if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-        // Both brick modes: reset to original paddle
-        if (ballIndex === 0) {
+        // Both brick modes: respawn from the losing player's own paddle (like game start)
+        if (losingPlayer === 'left') {
+            // Left player lost, respawn from left paddle
             ball.x = 30;
             ball.y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
-            ball.speedX = BASE_BALL_SPEED;
+            ball.speedX = BASE_BALL_SPEED; // Move toward right (away from paddle)
             ball.owner = 'left';
-        } else {
+            console.log(`DEBUG: Ball ${ballIndex} respawning from LEFT paddle (left player lost), x=${ball.x}, speedX=${ball.speedX}`);
+        } else if (losingPlayer === 'right') {
+            // Right player lost, respawn from right paddle
             ball.x = CONTAINER_WIDTH - 30;
             ball.y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
-            ball.speedX = -BASE_BALL_SPEED;
+            ball.speedX = -BASE_BALL_SPEED; // Move toward left (away from paddle)
             ball.owner = 'right';
+            console.log(`DEBUG: Ball ${ballIndex} respawning from RIGHT paddle (right player lost), x=${ball.x}, speedX=${ball.speedX}`);
+        } else {
+            // Fallback to original logic (shouldn't happen with new system)
+            if (ballIndex === 0) {
+                ball.x = 30;
+                ball.y = gameState.paddleLeftY + PADDLE_HEIGHT / 2;
+                ball.speedX = BASE_BALL_SPEED;
+                ball.owner = 'left';
+            } else {
+                ball.x = CONTAINER_WIDTH - 30;
+                ball.y = gameState.paddleRightY + PADDLE_HEIGHT / 2;
+                ball.speedX = -BASE_BALL_SPEED;
+                ball.owner = 'right';
+            }
+            console.log(`DEBUG: Ball ${ballIndex} using fallback positioning`);
         }
         ball.speedY = Math.random() > 0.5 ? 3 : -3;
     } else {
@@ -422,6 +699,7 @@ function resetSingleBall(ballIndex) {
         ball.y = CONTAINER_HEIGHT / 2;
         ball.speedX *= -1;
         ball.speedY = Math.random() > 0.5 ? 3 : -3;
+        console.log(`DEBUG: Ball ${ballIndex} reset to center (single ball mode)`);
     }
     
     // Reactivate the ball and make it visible
@@ -435,26 +713,24 @@ function updatePaddles() {
     // Player 1 (left paddle) - always human controlled
     const leftFrozen = gameState.frozenPaddles.left && currentTime < gameState.frozenPaddles.left;
     if (!leftFrozen) {
-        const leftPaddleHeight = gameState.activeEffects.left.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
         if (gameState.keysPressed[gameConfig.p1Keys.up] && gameState.paddleLeftY > 0) {
             gameState.paddleLeftY -= BASE_PADDLE_SPEED;
         }
-        if (gameState.keysPressed[gameConfig.p1Keys.down] && gameState.paddleLeftY < CONTAINER_HEIGHT - leftPaddleHeight) {
+        if (gameState.keysPressed[gameConfig.p1Keys.down] && gameState.paddleLeftY < CONTAINER_HEIGHT - getLeftPaddleHeight()) {
             gameState.paddleLeftY += BASE_PADDLE_SPEED;
         }
     }
-    paddleLeft.setAttribute("y", gameState.paddleLeftY);
+    setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
     
     // Player 2 (right paddle) - AI or human depending on mode
     const rightFrozen = gameState.frozenPaddles.right && currentTime < gameState.frozenPaddles.right;
     if (gameConfig.mode === 'pvp' || gameConfig.mode === 'brick2p') {
         // Human controlled
         if (!rightFrozen) {
-            const rightPaddleHeight = gameState.activeEffects.right.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
             if (gameState.keysPressed[gameConfig.p2Keys.up] && gameState.paddleRightY > 0) {
                 gameState.paddleRightY -= BASE_PADDLE_SPEED;
             }
-            if (gameState.keysPressed[gameConfig.p2Keys.down] && gameState.paddleRightY < CONTAINER_HEIGHT - rightPaddleHeight) {
+            if (gameState.keysPressed[gameConfig.p2Keys.down] && gameState.paddleRightY < CONTAINER_HEIGHT - getRightPaddleHeight()) {
                 gameState.paddleRightY += BASE_PADDLE_SPEED;
             }
         }
@@ -464,7 +740,7 @@ function updatePaddles() {
             updateAI();
         }
     }
-    paddleRight.setAttribute("y", gameState.paddleRightY);
+    setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
 }
 
 function updateAI() {
@@ -519,17 +795,15 @@ function updateAI() {
             }
         }
         
-        const rightPaddleHeight = gameState.activeEffects.right.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
-        gameState.aiTargetY = predictedY - rightPaddleHeight / 2;
+        gameState.aiTargetY = predictedY - getRightPaddleHeight() / 2;
     }
     
     // Move AI paddle toward target
-    const rightPaddleHeight = gameState.activeEffects.right.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
-    const paddleCenterY = gameState.paddleRightY + rightPaddleHeight / 2;
-    const targetCenterY = gameState.aiTargetY + rightPaddleHeight / 2;
+    const paddleCenterY = gameState.paddleRightY + getRightPaddleHeight() / 2;
+    const targetCenterY = gameState.aiTargetY + getRightPaddleHeight() / 2;
     
     if (Math.abs(paddleCenterY - targetCenterY) > 5) {
-        if (paddleCenterY < targetCenterY && gameState.paddleRightY < CONTAINER_HEIGHT - rightPaddleHeight) {
+        if (paddleCenterY < targetCenterY && gameState.paddleRightY < CONTAINER_HEIGHT - getRightPaddleHeight()) {
             gameState.paddleRightY += Math.min(aiConfig.speed, targetCenterY - paddleCenterY);
         } else if (paddleCenterY > targetCenterY && gameState.paddleRightY > 0) {
             gameState.paddleRightY -= Math.min(aiConfig.speed, paddleCenterY - targetCenterY);
@@ -537,7 +811,7 @@ function updateAI() {
     }
     
     // Ensure paddle stays within bounds
-    gameState.paddleRightY = Math.max(0, Math.min(CONTAINER_HEIGHT - rightPaddleHeight, gameState.paddleRightY));
+    gameState.paddleRightY = Math.max(0, Math.min(CONTAINER_HEIGHT - getRightPaddleHeight(), gameState.paddleRightY));
 }
 
 function checkAIStickyBallRelease() {
@@ -574,9 +848,13 @@ function checkAIStickyBallRelease() {
             (timeSinceStuck > minHoldTime && Math.random() < 0.3); // 30% chance per frame after min time
         
         if (shouldRelease) {
-            // Release the ball
-            ball.speedX = -BASE_BALL_SPEED;
-            ball.speedY = (Math.random() - 0.5) * 4;
+            // Release the ball with proper angle based on paddle position
+            const stickyInfo = gameState.stickyBalls[ballIndex];
+            const paddleHeight = stickyInfo.player === 'left' ? getLeftPaddleHeight() : getRightPaddleHeight();
+            const hitPosition = (stickyInfo.offset + paddleHeight / 2) / paddleHeight; // 0 to 1
+            
+            ball.speedX = stickyInfo.player === 'left' ? BASE_BALL_SPEED : -BASE_BALL_SPEED;
+            ball.speedY = (hitPosition - 0.5) * 8; // Same logic as normal paddle collision
             delete gameState.stickyBalls[ballIndex];
         }
     });
@@ -684,17 +962,14 @@ function updateBalls() {
         if (gameState.stickyBalls[i]) {
             const stickyInfo = gameState.stickyBalls[i];
             if (stickyInfo.player === 'left') {
-                const leftPaddleHeight = gameState.activeEffects.left.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
                 ball.x = 20 + BALL_RADIUS;
-                ball.y = gameState.paddleLeftY + leftPaddleHeight / 2 + stickyInfo.offset;
+                ball.y = gameState.paddleLeftY + getLeftPaddleHeight() / 2 + stickyInfo.offset;
             } else {
-                const rightPaddleHeight = gameState.activeEffects.right.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
                 ball.x = CONTAINER_WIDTH - 20 - BALL_RADIUS;
-                ball.y = gameState.paddleRightY + rightPaddleHeight / 2 + stickyInfo.offset;
+                ball.y = gameState.paddleRightY + getRightPaddleHeight() / 2 + stickyInfo.offset;
             }
             // Skip normal collision detection for sticky balls
-            ball.element.setAttribute("cx", ball.x);
-            ball.element.setAttribute("cy", ball.y);
+            setBallPosition(ball.element, ball.x, ball.y);
             continue;
         }
         
@@ -715,12 +990,11 @@ function updateBalls() {
         }
         
         // Left paddle collision
-        const leftPaddleHeight = gameState.activeEffects.left.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
         if (
             ball.x - BALL_RADIUS <= 20 &&
             ball.x - BALL_RADIUS > 10 &&
             ball.y >= gameState.paddleLeftY &&
-            ball.y <= gameState.paddleLeftY + leftPaddleHeight &&
+            ball.y <= gameState.paddleLeftY + getLeftPaddleHeight() &&
             ball.speedX < 0
         ) {
             ball.owner = 'left'; // Update ownership
@@ -730,7 +1004,7 @@ function updateBalls() {
                 // Stick ball to paddle
                 gameState.stickyBalls[i] = {
                     player: 'left',
-                    offset: ball.y - (gameState.paddleLeftY + leftPaddleHeight / 2)
+                    offset: ball.y - (gameState.paddleLeftY + getLeftPaddleHeight() / 2)
                 };
                 ball.speedX = 0;
                 ball.speedY = 0;
@@ -739,17 +1013,16 @@ function updateBalls() {
                 ball.speedX *= -1;
                 ball.x = 20 + BALL_RADIUS;
                 // Add spin based on where ball hits paddle
-                const hitPosition = (ball.y - gameState.paddleLeftY) / leftPaddleHeight;
+                const hitPosition = (ball.y - gameState.paddleLeftY) / getLeftPaddleHeight();
                 ball.speedY = (hitPosition - 0.5) * 8;
             }
         }
         
         // Right paddle collision (always active now)
-        const rightPaddleHeight = gameState.activeEffects.right.bigPaddle ? PADDLE_HEIGHT * 2 : PADDLE_HEIGHT;
         if (ball.x + BALL_RADIUS >= CONTAINER_WIDTH - 20 &&
             ball.x + BALL_RADIUS < CONTAINER_WIDTH - 10 &&
             ball.y >= gameState.paddleRightY &&
-            ball.y <= gameState.paddleRightY + rightPaddleHeight &&
+            ball.y <= gameState.paddleRightY + getRightPaddleHeight() &&
             ball.speedX > 0
         ) {
             ball.owner = 'right'; // Update ownership
@@ -759,7 +1032,7 @@ function updateBalls() {
                 // Stick ball to paddle
                 gameState.stickyBalls[i] = {
                     player: 'right',
-                    offset: ball.y - (gameState.paddleRightY + rightPaddleHeight / 2)
+                    offset: ball.y - (gameState.paddleRightY + getRightPaddleHeight() / 2)
                 };
                 ball.speedX = 0;
                 ball.speedY = 0;
@@ -768,7 +1041,7 @@ function updateBalls() {
                 ball.speedX *= -1;
                 ball.x = CONTAINER_WIDTH - 20 - BALL_RADIUS;
                 // Add spin based on where ball hits paddle
-                const hitPosition = (ball.y - gameState.paddleRightY) / rightPaddleHeight;
+                const hitPosition = (ball.y - gameState.paddleRightY) / getRightPaddleHeight();
                 ball.speedY = (hitPosition - 0.5) * 8;
             }
         }
@@ -777,17 +1050,30 @@ function updateBalls() {
         if (ball.x < 0) {
             console.log(`DEBUG: Ball ${i} went out left side (x=${ball.x}), starting countdown for left player`);
             if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-                // In brick modes, award point and start countdown (left player lost ball)
+                // In brick modes, award point and handle ball respawn
                 gameState.rightScore++;
                 updateScore();
-                startBallCountdown(i, 'left'); // Countdown on left side (losing player)
+                handleBrickModeballLoss(i, 'left'); // Handle ball loss in brick mode
             } else {
                 gameState.rightScore++;
                 updateScore();
                 if (gameState.rightScore >= gameConfig.maxScore) {
                     gameOver("Player 2");
                 } else {
-                    startBallCountdown(i, 'left'); // Countdown on left side (losing player)
+                    // Deactivate the ball that went out
+                    ball.active = false;
+                    ball.element.style.display = 'none';
+                    
+                    // Only start countdown if less than 2 balls remain in total
+                    const activeBalls = gameState.balls.filter(b => b.active);
+                    if (activeBalls.length < 2) {
+                        // Check if left player has no balls coming towards them
+                        const ballsTowardLeft = activeBalls.filter(b => b.speedX < 0); // Moving left
+                        if (ballsTowardLeft.length === 0) {
+                            // Left player has no incoming balls, start countdown for them
+                            startBallCountdown(i, 'left');
+                        }
+                    }
                 }
             }
         }
@@ -795,24 +1081,36 @@ function updateBalls() {
         if (ball.x > CONTAINER_WIDTH) {
             console.log(`DEBUG: Ball ${i} went out right side (x=${ball.x}), starting countdown for right player`);
             if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-                // In brick modes, award point and start countdown (right player lost ball)
+                // In brick modes, award point and handle ball respawn
                 gameState.leftScore++;
                 updateScore();
-                startBallCountdown(i, 'right'); // Countdown on right side (losing player)
+                handleBrickModeballLoss(i, 'right'); // Handle ball loss in brick mode
             } else {
                 gameState.leftScore++;
                 updateScore();
                 if (gameState.leftScore >= gameConfig.maxScore) {
                     gameOver("Player 1");
                 } else {
-                    startBallCountdown(i, 'right'); // Countdown on right side (losing player)
+                    // Deactivate the ball that went out
+                    ball.active = false;
+                    ball.element.style.display = 'none';
+                    
+                    // Only start countdown if less than 2 balls remain in total
+                    const activeBalls = gameState.balls.filter(b => b.active);
+                    if (activeBalls.length < 2) {
+                        // Check if right player has no balls coming towards them
+                        const ballsTowardRight = activeBalls.filter(b => b.speedX > 0); // Moving right
+                        if (ballsTowardRight.length === 0) {
+                            // Right player has no incoming balls, start countdown for them
+                            startBallCountdown(i, 'right');
+                        }
+                    }
                 }
             }
         }
         
         // Apply ball position
-        ball.element.setAttribute("cx", ball.x);
-        ball.element.setAttribute("cy", ball.y);
+        setBallPosition(ball.element, ball.x, ball.y);
     }
 }
 
@@ -858,7 +1156,7 @@ function gameOver(winner) {
 }
 
 function gameLoop() {
-    if (gameState.gameRunning) {
+    if (gameState.gameRunning && !gameState.paused) {
         updatePaddles();
         updateBalls();
         updateBonuses();
@@ -867,6 +1165,33 @@ function gameLoop() {
         updateCountdowns();
         updateEffects();
         requestAnimationFrame(gameLoop);
+    }
+}
+
+// Brick Mode Ball Loss Handler
+function handleBrickModeballLoss(ballIndex, losingPlayer) {
+    const ball = gameState.balls[ballIndex];
+    ball.active = false;
+    ball.element.style.display = 'none';
+    
+    console.log(`DEBUG: Ball ${ballIndex} lost by ${losingPlayer} in brick mode`);
+    
+    // In brick mode, determine ball ownership:
+    // Ball 0 belongs to left player, Ball 1 belongs to right player
+    const ballOwner = ballIndex === 0 ? 'left' : 'right';
+    
+    console.log(`DEBUG: Ball ${ballIndex} owner is ${ballOwner}, losing player is ${losingPlayer}`);
+    
+    if (ballOwner === losingPlayer) {
+        // This ball belongs to the losing player - start countdown
+        console.log(`DEBUG: Ball ${ballIndex} belongs to losing player ${losingPlayer} - starting countdown`);
+        startBallCountdown(ballIndex, losingPlayer);
+    } else {
+        // This ball belongs to the winning player - respawn immediately for the winner
+        console.log(`DEBUG: Ball ${ballIndex} belongs to winning player ${ballOwner} - respawning immediately for ${ballOwner}`);
+        setTimeout(() => {
+            resetSingleBall(ballIndex, ballOwner); // Use ballOwner, not losingPlayer
+        }, 100); // Small delay to avoid visual glitches
     }
 }
 
@@ -969,16 +1294,16 @@ function updateCountdowns() {
                 const sortedBallIndexes = [...countdown.ballIndexes].sort((a, b) => a - b); // [0, 1] order
                 for (let i = 0; i < ballsToRespawn && i < sortedBallIndexes.length; i++) {
                     const ballToRespawn = sortedBallIndexes[i];
-                    console.log(`DEBUG: Respawning ball ${ballToRespawn} (priority order)`);
-                    resetSingleBall(ballToRespawn);
+                    console.log(`DEBUG: Respawning ball ${ballToRespawn} (priority order) for losing player: ${countdown.playerSide}`);
+                    resetSingleBall(ballToRespawn, countdown.playerSide);
                 }
             } else {
                 // Single ball to respawn
                 const ballsToRespawn = getBallsToRespawn(countdown.playerSide, 1);
                 console.log(`DEBUG: Single ball countdown finished for ${countdown.playerSide}. Should respawn: ${ballsToRespawn}`);
                 if (ballsToRespawn > 0) {
-                    console.log(`DEBUG: Respawning ball ${ballIndex}`);
-                    resetSingleBall(parseInt(ballIndex));
+                    console.log(`DEBUG: Respawning ball ${ballIndex} for losing player: ${countdown.playerSide}`);
+                    resetSingleBall(parseInt(ballIndex), countdown.playerSide);
                 } else {
                     console.log(`DEBUG: Ball ${ballIndex} NOT respawning - no balls allocated for this player`);
                 }
@@ -995,7 +1320,13 @@ function getBallsToRespawn(playerSide, ballsLost) {
     const multiBallEffect = playerEffects && playerEffects.multiBall;
     const hasMultiBall = multiBallEffect && (Date.now() - multiBallEffect.startTime < multiBallEffect.duration);
     
-    // In all modes, player should have at least 1 ball
+    // In brick modes, players always get all their lost balls back
+    if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
+        console.log(`DEBUG: getBallsToRespawn (BRICK mode) - Player: ${playerSide}, BallsLost: ${ballsLost}, Will respawn ALL: ${ballsLost}`);
+        return ballsLost; // Always respawn all balls in brick mode
+    }
+    
+    // In standard pong modes, player should have at least 1 ball
     let baseBalls = 1;
     
     // If multi-ball is active, player should have 2 balls total
@@ -1003,7 +1334,7 @@ function getBallsToRespawn(playerSide, ballsLost) {
         baseBalls = 2;
     }
     
-    console.log(`DEBUG: getBallsToRespawn - Player: ${playerSide}, PlayerEffects: ${JSON.stringify(playerEffects)}, MultiBallEffect: ${JSON.stringify(multiBallEffect)}, HasMultiBall: ${hasMultiBall}, BaseBalls: ${baseBalls}, BallsLost: ${ballsLost}`);
+    console.log(`DEBUG: getBallsToRespawn (PONG mode) - Player: ${playerSide}, HasMultiBall: ${hasMultiBall}, BaseBalls: ${baseBalls}, BallsLost: ${ballsLost}`);
     
     // Return the number of balls this player should have (up to the number lost)
     const result = Math.min(ballsLost, baseBalls);
@@ -1014,19 +1345,17 @@ function getBallsToRespawn(playerSide, ballsLost) {
 // Effect Display System
 function updateEffectDisplay(player) {
     const effects = gameState.activeEffects[player];
-    const displays = gameState.effectDisplays[player];
     const currentTime = Date.now();
+    const container = player === 'left' ? effectsLeft : effectsRight;
     
-    // Clear old displays
-    displays.forEach(display => {
-        if (display.group && display.group.parentNode) {
-            display.group.remove();
-        }
-    });
-    displays.length = 0;
+    // Check if container exists
+    if (!container) {
+        console.error(`Effect container for ${player} not found!`);
+        return;
+    }
     
-    const baseX = player === 'left' ? -50 : CONTAINER_WIDTH + 50;
-    let yOffset = 80;
+    // Clear existing displays
+    container.innerHTML = '';
     
     // Display active effects with circular progress
     Object.keys(effects).forEach(effectType => {
@@ -1035,50 +1364,23 @@ function updateEffectDisplay(player) {
             const elapsed = currentTime - effect.startTime;
             const progress = elapsed / effect.duration; // 0 to 1
             const remaining = 1 - progress; // 1 to 0
+            const isDebuff = isEffectDebuff(effectType);
             
-            // Create group for this effect
-            const effectGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            // Create effect icon container
+            const iconDiv = document.createElement('div');
+            iconDiv.className = 'effect-icon';
+            iconDiv.textContent = getEffectIcon(effectType);
             
-            // Background circle (gray)
-            const bgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            bgCircle.setAttribute("cx", baseX);
-            bgCircle.setAttribute("cy", yOffset);
-            bgCircle.setAttribute("r", "20");
-            bgCircle.setAttribute("fill", "rgba(50, 50, 50, 0.8)");
-            bgCircle.setAttribute("stroke", "rgba(100, 100, 100, 0.5)");
-            bgCircle.setAttribute("stroke-width", "2");
-            effectGroup.appendChild(bgCircle);
+            // Create progress ring using CSS
+            const progressDiv = document.createElement('div');
+            progressDiv.className = `effect-progress ${isDebuff ? 'debuff' : ''}`;
             
-            // Progress circle (green, diminishing)
-            const progressCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            const circumference = 2 * Math.PI * 18; // radius 18 for stroke
-            const strokeDashoffset = circumference * progress;
+            // Set CSS custom property for progress
+            const progressPercent = remaining * 100; // remaining goes from 1 to 0
+            progressDiv.style.setProperty('--progress', progressPercent);
             
-            progressCircle.setAttribute("cx", baseX);
-            progressCircle.setAttribute("cy", yOffset);
-            progressCircle.setAttribute("r", "18");
-            progressCircle.setAttribute("fill", "none");
-            progressCircle.setAttribute("stroke", "#4CAF50");
-            progressCircle.setAttribute("stroke-width", "4");
-            progressCircle.setAttribute("stroke-dasharray", circumference);
-            progressCircle.setAttribute("stroke-dashoffset", strokeDashoffset);
-            progressCircle.setAttribute("transform", `rotate(-90 ${baseX} ${yOffset})`);
-            effectGroup.appendChild(progressCircle);
-            
-            // Effect icon
-            const effectIcon = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            effectIcon.setAttribute("x", baseX);
-            effectIcon.setAttribute("y", yOffset + 6);
-            effectIcon.setAttribute("text-anchor", "middle");
-            effectIcon.setAttribute("font-size", "20");
-            effectIcon.setAttribute("fill", "white");
-            effectIcon.textContent = getEffectIcon(effectType);
-            effectGroup.appendChild(effectIcon);
-            
-            document.getElementById('game-svg').appendChild(effectGroup);
-            displays.push({ group: effectGroup, type: effectType });
-            
-            yOffset += 50;
+            iconDiv.appendChild(progressDiv);
+            container.appendChild(iconDiv);
         }
     });
 }
@@ -1090,8 +1392,13 @@ function getEffectIcon(effectType) {
         case 'laser': return '🔫';
         case 'slowBall': return '🐢';
         case 'sticky': return '🧲';
-        default: return '?';
+        default: return '❓';
     }
+}
+
+function isEffectDebuff(effectType) {
+    // Slow ball is the only debuff currently
+    return effectType === 'slowBall';
 }
 
 function getEffectDisplayName(effectType) {
@@ -1116,37 +1423,7 @@ function getEffectColor(effectType) {
     }
 }
 
-// Bonus Name Display
-function showBonusName(type, player, isDebuff = false) {
-    const bonusNames = {
-        [BONUS_TYPES.BIG_PADDLE]: 'Big Paddle',
-        [BONUS_TYPES.MULTI_BALL]: 'Multi Ball',
-        [BONUS_TYPES.LASER_PADDLE]: 'Laser Paddle',
-        [BONUS_TYPES.SLOW_BALL]: 'Slow Ball',
-        [BONUS_TYPES.STICKY_PADDLE]: 'Sticky Paddle'
-    };
-    
-    const bonusText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    const x = player === 'left' ? 100 : CONTAINER_WIDTH - 100;
-    const y = 150;
-    
-    bonusText.setAttribute("x", x);
-    bonusText.setAttribute("y", y);
-    bonusText.setAttribute("text-anchor", "middle");
-    bonusText.setAttribute("font-size", "20");
-    bonusText.setAttribute("fill", isDebuff ? "#FF4444" : "#FFD700"); // Red for debuffs, gold for buffs
-    bonusText.setAttribute("font-weight", "bold");
-    bonusText.textContent = (isDebuff ? "⚠️ " : "✨ ") + (bonusNames[type] || 'Bonus');
-    
-    document.getElementById('game-svg').appendChild(bonusText);
-    
-    // Remove after 2 seconds
-    setTimeout(() => {
-        if (bonusText.parentNode) {
-            bonusText.remove();
-        }
-    }, 2000);
-}
+// Bonus name display removed - only effect icons with circles are shown
 
 // Bonus System
 function generateBonus(x, y, ballOwner) {
@@ -1250,14 +1527,14 @@ function updateBonuses() {
 function checkBonusCollision(bonus) {
     // Check left paddle
     if (bonus.x >= 10 && bonus.x <= 20 && 
-        bonus.y >= gameState.paddleLeftY && bonus.y <= gameState.paddleLeftY + PADDLE_HEIGHT) {
+        bonus.y >= gameState.paddleLeftY && bonus.y <= gameState.paddleLeftY + getLeftPaddleHeight()) {
         applyBonus(bonus.type, 'left');
         return true;
     }
     
     // Check right paddle
     if (bonus.x >= CONTAINER_WIDTH - 20 && bonus.x <= CONTAINER_WIDTH - 10 && 
-        bonus.y >= gameState.paddleRightY && bonus.y <= gameState.paddleRightY + PADDLE_HEIGHT) {
+        bonus.y >= gameState.paddleRightY && bonus.y <= gameState.paddleRightY + getRightPaddleHeight()) {
         applyBonus(bonus.type, 'right');
         return true;
     }
@@ -1268,15 +1545,7 @@ function checkBonusCollision(bonus) {
 function applyBonus(type, player) {
     const effects = gameState.activeEffects[player];
     
-    // Show bonus name on appropriate side
-    if (type === BONUS_TYPES.SLOW_BALL) {
-        // Slow ball affects opponent, show message on opponent's side
-        const opponentSide = player === 'left' ? 'right' : 'left';
-        showBonusName(type, opponentSide, true); // true = is debuff
-    } else {
-        // Other bonuses affect the player who picked them up
-        showBonusName(type, player, false); // false = is buff
-    }
+    // Bonus names are no longer displayed - only effect icons with circles are shown
     
     switch (type) {
         case BONUS_TYPES.BIG_PADDLE:
@@ -1304,7 +1573,7 @@ function applyBonus(type, player) {
                     startTime: Date.now()
                 };
             }
-            createMultiBall();
+            createMultiBall(player);
             break;
             
         case BONUS_TYPES.LASER_PADDLE:
@@ -1323,12 +1592,16 @@ function applyBonus(type, player) {
             break;
             
         case BONUS_TYPES.SLOW_BALL:
-            if (effects.slowBall) {
-                // Extend existing effect
-                effects.slowBall.duration += 7000;
+            // Apply slow effect to opponent's side, but show effect icon on opponent's side too
+            const opponentSide = player === 'left' ? 'right' : 'left';
+            const opponentEffects = gameState.activeEffects[opponentSide];
+            
+            if (opponentEffects.slowBall) {
+                // Extend existing effect on opponent
+                opponentEffects.slowBall.duration += 7000;
             } else {
-                // Create new effect
-                effects.slowBall = {
+                // Create new effect on opponent
+                opponentEffects.slowBall = {
                     duration: 7000,
                     startTime: Date.now()
                 };
@@ -1354,24 +1627,58 @@ function applyBonus(type, player) {
 function updatePaddleSize(player) {
     const paddle = player === 'left' ? paddleLeft : paddleRight;
     const effect = gameState.activeEffects[player].bigPaddle;
+    const currentHeight = parseInt(paddle.getAttribute("height"));
+    const targetHeight = effect && Date.now() - effect.startTime < effect.duration ? 120 : PADDLE_HEIGHT;
     
-    if (effect && Date.now() - effect.startTime < effect.duration) {
-        paddle.setAttribute("height", PADDLE_HEIGHT * 2);
-    } else {
-        paddle.setAttribute("height", PADDLE_HEIGHT);
+    // Only update if height actually changed
+    if (currentHeight !== targetHeight) {
+        // Update paddle properties first
+        paddle.setAttribute("height", targetHeight);
+        paddle.setAttribute("href", targetHeight > PADDLE_HEIGHT ? "icons/paddle-big.svg" : "icons/paddle.svg");
+        
+        // If paddle would go out of bounds (bottom), adjust position slightly
+        const currentY = player === 'left' ? gameState.paddleLeftY : gameState.paddleRightY;
+        if (currentY + targetHeight > CONTAINER_HEIGHT) {
+            const newY = CONTAINER_HEIGHT - targetHeight;
+            if (player === 'left') {
+                gameState.paddleLeftY = newY;
+                setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
+            } else {
+                gameState.paddleRightY = newY;
+                setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
+            }
+        }
+        // If paddle is at top and shrinking, no adjustment needed
+        // The paddle naturally grows/shrinks from its current position
+    }
+    
+    // Clean up expired effects
+    if (!effect || Date.now() - effect.startTime >= effect.duration) {
         delete gameState.activeEffects[player].bigPaddle;
     }
 }
 
-function createMultiBall() {
+function createMultiBall(player) {
+    // Find a ball belonging to this player to duplicate
+    const playerBalls = gameState.balls.filter(ball => ball.active && ball.owner === player);
+    if (playerBalls.length === 0) {
+        console.log('No balls found for player', player, 'to duplicate');
+        return; // No balls to duplicate
+    }
+    
+    // Pick a random ball from the player's balls to duplicate
+    const sourceBall = playerBalls[Math.floor(Math.random() * playerBalls.length)];
+    
     // Find inactive ball or create new one
     let newBall = gameState.balls.find(ball => !ball.active);
     
     if (!newBall) {
-        // Create new ball element
-        const ballElement = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        ballElement.setAttribute("r", BALL_RADIUS);
-        ballElement.setAttribute("fill", "white");
+        // Create new ball element using image like the main balls
+        const ballElement = document.createElementNS("http://www.w3.org/2000/svg", "image");
+        ballElement.setAttribute("width", "12");
+        ballElement.setAttribute("height", "12");
+        ballElement.setAttribute("href", "icons/ball.svg");
+        ballElement.style.display = 'none';
         document.getElementById('game-svg').appendChild(ballElement);
         
         newBall = {
@@ -1386,13 +1693,21 @@ function createMultiBall() {
         gameState.balls.push(newBall);
     }
     
-    // Activate the ball
+    // Duplicate the source ball at its current position
     newBall.active = true;
     newBall.element.style.display = 'block';
-    newBall.x = CONTAINER_WIDTH / 2;
-    newBall.y = CONTAINER_HEIGHT / 2;
-    newBall.speedX = Math.random() > 0.5 ? BASE_BALL_SPEED : -BASE_BALL_SPEED;
-    newBall.speedY = (Math.random() - 0.5) * 6;
+    newBall.x = sourceBall.x + (Math.random() - 0.5) * 20; // Small random offset
+    newBall.y = sourceBall.y + (Math.random() - 0.5) * 20;
+    newBall.owner = player;
+    
+    // Give it a completely random angle but reasonable speed
+    const randomAngle = Math.random() * 2 * Math.PI; // 0 to 2π
+    const speed = BASE_BALL_SPEED;
+    newBall.speedX = Math.cos(randomAngle) * speed;
+    newBall.speedY = Math.sin(randomAngle) * speed;
+    
+    // Update visual position
+    setBallPosition(newBall.element, newBall.x, newBall.y);
 }
 
 function applySlowBall(player) {
@@ -1401,8 +1716,12 @@ function applySlowBall(player) {
     
     for (let ball of gameState.balls) {
         if (ball.active && ball.owner === opponentSide) {
-            ball.speedX *= 0.5;
-            ball.speedY *= 0.5;
+            // Only slow down if not already slowed (prevent multiple applications)
+            const currentSpeed = Math.sqrt(ball.speedX ** 2 + ball.speedY ** 2);
+            if (currentSpeed > BASE_BALL_SPEED * 0.6) {
+                ball.speedX *= 0.5;
+                ball.speedY *= 0.5;
+            }
         }
     }
 }
@@ -1483,6 +1802,13 @@ function updateLasers() {
             continue;
         }
         
+        // Check collision with enemy paddle
+        if (checkLaserPaddleCollision(laser)) {
+            laser.element.remove();
+            gameState.lasers.splice(i, 1);
+            continue;
+        }
+        
         // Remove if out of bounds horizontally
         if (laser.x < 0 || laser.x > CONTAINER_WIDTH) {
             laser.element.remove();
@@ -1528,6 +1854,35 @@ function checkLaserBrickCollision(laser) {
     return false;
 }
 
+function checkLaserPaddleCollision(laser) {
+    // Check if laser hits enemy paddle
+    const enemyPlayer = laser.player === 'left' ? 'right' : 'left';
+    
+    if (enemyPlayer === 'left') {
+        // Check collision with left paddle
+        if (laser.x >= 10 && laser.x <= 20 && 
+            laser.y >= gameState.paddleLeftY && laser.y <= gameState.paddleLeftY + getLeftPaddleHeight()) {
+            // Hit left paddle - reduce left player's score
+            gameState.leftScore = Math.max(0, gameState.leftScore - 5);
+            updateScore();
+            console.log(`Laser from right player hit left paddle! Left score reduced to ${gameState.leftScore}`);
+            return true;
+        }
+    } else {
+        // Check collision with right paddle
+        if (laser.x >= CONTAINER_WIDTH - 20 && laser.x <= CONTAINER_WIDTH - 10 && 
+            laser.y >= gameState.paddleRightY && laser.y <= gameState.paddleRightY + getRightPaddleHeight()) {
+            // Hit right paddle - reduce right player's score
+            gameState.rightScore = Math.max(0, gameState.rightScore - 5);
+            updateScore();
+            console.log(`Laser from left player hit right paddle! Right score reduced to ${gameState.rightScore}`);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 function fireLaser(player) {
     const effects = gameState.activeEffects[player];
     if (!effects.laser) return;
@@ -1537,7 +1892,7 @@ function fireLaser(player) {
     
     const laser = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     laser.setAttribute("x", paddleX);
-    laser.setAttribute("y", paddleY + PADDLE_HEIGHT / 2 - 1);
+    laser.setAttribute("y", paddleY + getPaddleHeight(player) / 2 - 1);
     laser.setAttribute("width", "10"); // Horizontal laser beam
     laser.setAttribute("height", "2");
     laser.setAttribute("fill", "#FF5722");
@@ -1547,7 +1902,7 @@ function fireLaser(player) {
     gameState.lasers.push({
         element: laser,
         x: paddleX,
-        y: paddleY + PADDLE_HEIGHT / 2,
+        y: paddleY + getPaddleHeight(player) / 2,
         speed: 8,
         player: player,
         owner: player
