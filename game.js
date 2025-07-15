@@ -742,7 +742,13 @@ function resetSingleBall(ballIndex, losingPlayer = null) {
     const ball = gameState.balls[ballIndex];
     console.log(`DEBUG: resetSingleBall called for ball ${ballIndex}, losing player: ${losingPlayer}`);
     
-    if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
+    if (gameConfig.mode === 'solo') {
+        // Solo mode: respawn from left paddle
+        if (currentGameMode && currentGameMode.respawnBall) {
+            currentGameMode.respawnBall(ballIndex);
+            return; // Let the solo mode handle its own respawn
+        }
+    } else if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
         // Both brick modes: respawn from the losing player's own paddle (like game start)
         if (losingPlayer === 'left' || losingPlayer === 'right') {
             setBallStartPosition(ball, losingPlayer);
@@ -1182,7 +1188,20 @@ function updateBalls() {
                 ball.y >= paddleY &&
                 ball.y <= paddleY + paddleHeight) {
                 
+                // Handle explosive ball ownership change
+                const previousOwner = ball.owner;
                 ball.owner = player; // Update ownership
+                
+                // Update explosive effects for ownership change
+                if (previousOwner !== player) {
+                    // Remove explosive effect if ball changes owner
+                    if (gameState.explosiveBalls[i]) {
+                        delete gameState.explosiveBalls[i];
+                    }
+                    
+                    // Apply explosive effect if new owner has the effect active
+                    updateExplosiveBallsForPlayer(player);
+                }
                 
                 // Normal bounce
                 ball.speedX *= -1;
@@ -1207,7 +1226,7 @@ function updateBalls() {
         }
         
         if (ball.x > CONTAINER_WIDTH) {
-            if (currentGameMode) {
+            if (currentGameMode && gameConfig.mode !== 'solo') {
                 currentGameMode.handleBallLoss(i, 'right');
             }
         }
@@ -1958,14 +1977,37 @@ function createMultiBall(player) {
     newBall.y = sourceBall.y + (Math.random() - 0.5) * 20;
     newBall.owner = player;
     
-    // Give it a completely random angle but reasonable speed
-    const randomAngle = Math.random() * 2 * Math.PI; // 0 to 2π
-    const speed = BASE_BALL_SPEED;
-    newBall.speedX = Math.cos(randomAngle) * speed;
+    // Give it a direction that avoids going straight behind the player
+    const centerX = CONTAINER_WIDTH / 2;
+    let targetDirection; // 1 = right, -1 = left
+    
+    if (newBall.x > centerX) {
+        // Ball is on the right side, send it left
+        targetDirection = -1;
+    } else {
+        // Ball is on the left side, send it right
+        targetDirection = 1;
+    }
+    
+    // Random angle but constrained to the target direction
+    // Use angles between -60° and +60° from horizontal
+    const maxAngle = Math.PI / 3; // 60 degrees
+    const randomAngle = (Math.random() - 0.5) * 2 * maxAngle; // -60° to +60°
+    
+    // Use the same speed calculation as the original ball in solo mode
+    let speed = BASE_BALL_SPEED;
+    if (gameConfig.mode === 'solo' && currentGameMode && currentGameMode.calculateBallSpeed) {
+        speed = currentGameMode.calculateBallSpeed();
+    }
+    
+    newBall.speedX = Math.cos(randomAngle) * speed * targetDirection;
     newBall.speedY = Math.sin(randomAngle) * speed;
     
     // Update visual position
     setBallPosition(newBall.element, newBall.x, newBall.y);
+    
+    // Apply explosive effect if player has it active
+    updateExplosiveBallsForPlayer(player);
 }
 
 function applySlowBall(opponentSide) {
@@ -2004,21 +2046,24 @@ function applyGhostBall(player) {
 }
 
 function applyExplosiveBall(player) {
-    // Find an active ball belonging to this player to make explosive
-    const playerBalls = gameState.balls
-        .map((ball, index) => ({ball, index}))
-        .filter(({ball}) => ball.active && ball.owner === player);
-    
-    if (playerBalls.length > 0) {
-        // Pick a random ball from the player's balls
-        const randomBall = playerBalls[Math.floor(Math.random() * playerBalls.length)];
-        
-        // Apply explosive effect (temporary)
-        gameState.explosiveBalls[randomBall.index] = {
-            player: player,
-            startTime: Date.now()
-        };
-    }
+    // Apply explosive effect to ALL balls belonging to this player
+    updateExplosiveBallsForPlayer(player);
+}
+
+function updateExplosiveBallsForPlayer(player) {
+    // Apply explosive effect to all balls belonging to this player
+    gameState.balls.forEach((ball, index) => {
+        if (ball.active && ball.owner === player) {
+            const playerEffects = gameState.activeEffects[player];
+            if (playerEffects && playerEffects.explosiveBall && 
+                Date.now() - playerEffects.explosiveBall.startTime < playerEffects.explosiveBall.duration) {
+                gameState.explosiveBalls[index] = {
+                    player: player,
+                    startTime: Date.now()
+                };
+            }
+        }
+    });
 }
 
 function updateEffects() {
@@ -2031,6 +2076,10 @@ function updateEffects() {
     updatePaddleSize('right');
     updatePaddleColor('right');
     updateEffectDisplay('right');
+    
+    // Update explosive balls for all players
+    updateExplosiveBallsForPlayer('left');
+    updateExplosiveBallsForPlayer('right');
     
     // Remove expired effects
     for (let player of ['left', 'right']) {

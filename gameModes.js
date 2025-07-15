@@ -261,9 +261,10 @@ class SoloMode extends GameMode {
     reset() {
         // Reset ball to center-left
         const ball = this.gameState.balls[0];
-        ball.x = 100;
-        ball.y = this.CONTAINER_HEIGHT / 2;
-        ball.speedX = BASE_BALL_SPEED;
+        // Position ball on left paddle
+        ball.x = 30;
+        ball.y = this.gameState.paddleLeftY + PADDLE_HEIGHT / 2;
+        ball.speedX = this.calculateBallSpeed();
         ball.speedY = generateRandomBallSpeed();
         ball.owner = 'left';
         ball.active = true;
@@ -282,6 +283,7 @@ class SoloMode extends GameMode {
         const patternIndex = (this.currentLevel - 1) % this.levelPatterns.length;
         const pattern = this.levelPatterns[patternIndex];
         const difficulty = Math.floor((this.currentLevel - 1) / this.levelPatterns.length) + 1;
+        
         
         switch(pattern) {
             case 'circle':
@@ -309,9 +311,14 @@ class SoloMode extends GameMode {
     }
 
     generateCirclePattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        // In solo mode, use more of the available width (adapt to terrain size)
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5); // Center in usable space
         const centerY = this.CONTAINER_HEIGHT / 2;
-        const maxRadius = Math.min(this.CONTAINER_WIDTH, this.CONTAINER_HEIGHT) * 0.35;
+        
+        // Much larger patterns for wide screens
+        const maxRadius = Math.min(usableWidth * 0.6, this.CONTAINER_HEIGHT * 0.6);
+        console.log(`DEBUG: Circle pattern - usableWidth: ${usableWidth}, maxRadius: ${maxRadius}, centerX: ${centerX}`);
         const layers = 3 + Math.floor(difficulty / 2);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -334,9 +341,11 @@ class SoloMode extends GameMode {
     }
 
     generateSquarePattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const centerY = this.CONTAINER_HEIGHT / 2;
-        const maxSize = Math.min(this.CONTAINER_WIDTH, this.CONTAINER_HEIGHT) * 0.7;
+        const maxSize = Math.min(usableWidth * 0.8, this.CONTAINER_HEIGHT * 0.8);
+        console.log(`DEBUG: Square pattern - usableWidth: ${usableWidth}, maxSize: ${maxSize}`);
         const layers = 3 + Math.floor(difficulty / 2);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -377,7 +386,8 @@ class SoloMode extends GameMode {
     }
 
     generateDiamondPattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const centerY = this.CONTAINER_HEIGHT / 2;
         const rows = 7 + difficulty;
         
@@ -400,9 +410,10 @@ class SoloMode extends GameMode {
     }
 
     generateHeartPattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const centerY = this.CONTAINER_HEIGHT / 2;
-        const scale = Math.min(this.CONTAINER_WIDTH, this.CONTAINER_HEIGHT) * 0.015;
+        const scale = Math.min(usableWidth, this.CONTAINER_HEIGHT) * 0.04;
         
         // Heart shape equation points
         const points = [];
@@ -430,9 +441,10 @@ class SoloMode extends GameMode {
     }
 
     generateSpiralPattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const centerY = this.CONTAINER_HEIGHT / 2;
-        const maxRadius = Math.min(this.CONTAINER_WIDTH, this.CONTAINER_HEIGHT) * 0.35;
+        const maxRadius = Math.min(usableWidth * 0.4, this.CONTAINER_HEIGHT * 0.4);
         const spirals = 2 + Math.floor(difficulty / 3);
         const pointsPerSpiral = 15 + difficulty * 3;
         
@@ -456,7 +468,8 @@ class SoloMode extends GameMode {
     }
 
     generateTrianglePattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const baseY = this.CONTAINER_HEIGHT * 0.7;
         const height = this.CONTAINER_HEIGHT * 0.5;
         const rows = 6 + difficulty;
@@ -478,9 +491,10 @@ class SoloMode extends GameMode {
     }
 
     generateHexagonPattern(difficulty) {
-        const centerX = this.CONTAINER_WIDTH / 2;
+        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
+        const centerX = 100 + (usableWidth * 0.5);
         const centerY = this.CONTAINER_HEIGHT / 2;
-        const size = Math.min(this.CONTAINER_WIDTH, this.CONTAINER_HEIGHT) * 0.35;
+        const size = Math.min(usableWidth * 0.4, this.CONTAINER_HEIGHT * 0.4);
         const layers = 3 + Math.floor(difficulty / 3);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -613,7 +627,7 @@ class SoloMode extends GameMode {
             
             // Right wall collision - bounce back
             if (ball.x + BALL_RADIUS >= this.CONTAINER_WIDTH && ball.speedX > 0) {
-                ball.speedX *= -1;
+                ball.speedX = -Math.abs(ball.speedX); // Ensure negative direction
                 ball.x = this.CONTAINER_WIDTH - BALL_RADIUS;
             }
         }
@@ -625,6 +639,7 @@ class SoloMode extends GameMode {
             
             const nextBallX = ball.x + ball.speedX;
             const nextBallY = ball.y + ball.speedY;
+            
             
             for (let brick of this.gameState.bricks) {
                 if (!brick.destroyed && !brick.isIndestructible) {
@@ -648,7 +663,31 @@ class SoloMode extends GameMode {
                         const overlapX = (brick.width / 2 + BALL_RADIUS) - Math.abs(dx);
                         const overlapY = (brick.height / 2 + BALL_RADIUS) - Math.abs(dy);
                         
-                        if (overlapX < overlapY) {
+                        const oldSpeedX = ball.speedX;
+                        const oldSpeedY = ball.speedY;
+                        
+                        // Check for corner collision
+                        const cornerThreshold = 3; // Pixels - adjust for sensitivity
+                        const isCorner = Math.abs(overlapX - overlapY) < cornerThreshold;
+                        
+                        if (isCorner) {
+                            // Corner collision - bounce both directions
+                            ball.speedX *= -1;
+                            ball.speedY *= -1;
+                            
+                            // Position ball outside the brick in both directions
+                            if (dx < 0) {
+                                ball.x = brick.x - BALL_RADIUS;
+                            } else {
+                                ball.x = brick.x + brick.width + BALL_RADIUS;
+                            }
+                            if (dy < 0) {
+                                ball.y = brick.y - BALL_RADIUS;
+                            } else {
+                                ball.y = brick.y + brick.height + BALL_RADIUS;
+                            }
+                        } else if (overlapX < overlapY) {
+                            // Horizontal collision (left/right side)
                             ball.speedX *= -1;
                             if (dx < 0) {
                                 ball.x = brick.x - BALL_RADIUS;
@@ -656,6 +695,7 @@ class SoloMode extends GameMode {
                                 ball.x = brick.x + brick.width + BALL_RADIUS;
                             }
                         } else {
+                            // Vertical collision (top/bottom side)
                             ball.speedY *= -1;
                             if (dy < 0) {
                                 ball.y = brick.y - BALL_RADIUS;
@@ -706,6 +746,9 @@ class SoloMode extends GameMode {
                 if (Math.random() < 0.3) {
                     generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, 'left');
                 }
+                
+                // Update ball speed based on progress
+                this.updateBallSpeeds();
                 
                 // Check level complete
                 if (this.gameState.bricksRemaining === 0) {
@@ -768,6 +811,9 @@ class SoloMode extends GameMode {
         
         if (bricksToDestroy.length > 0) {
             updateScore();
+            
+            // Update ball speed based on progress
+            this.updateBallSpeeds();
             
             if (this.gameState.bricksRemaining === 0) {
                 this.completeLevel();
@@ -855,18 +901,59 @@ class SoloMode extends GameMode {
         const overlay = document.getElementById('level-transition');
         if (overlay) overlay.remove();
         
-        // Create countdown
+        // Generate and display the next level BEFORE the countdown
+        this.currentLevel++;
+        this.levelScore = 0;
+        this.maxCombo = 0;
+        this.transitionInProgress = false;
+        
+        // Clear all bonuses and effects before starting new level
+        clearBonuses();
+        clearLasers();
+        this.gameState.activeEffects = { left: {}, right: {} };
+        this.gameState.ghostBalls = {};
+        this.gameState.explosiveBalls = {};
+        clearExplosionAnimations();
+        
+        // Hide and deactivate second ball
+        this.gameState.balls[1].element.style.display = 'none';
+        this.gameState.balls[1].active = false;
+        
+        // Generate new level (visible during countdown)
+        this.generateLevel();
+        
+        // Reset ball but keep it inactive during countdown
+        this.reset();
+        const ball = this.gameState.balls[0];
+        ball.active = false;
+        ball.element.style.display = 'none';
+        
+        // Update UI
+        this.updateSoloUI();
+        
+        // Create countdown overlay
         const countdownGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         countdownGroup.setAttribute("id", "level-countdown");
         
+        // Add next level text
+        const nextLevelText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        nextLevelText.setAttribute("x", this.CONTAINER_WIDTH / 2);
+        nextLevelText.setAttribute("y", this.CONTAINER_HEIGHT / 2 - 80);
+        nextLevelText.setAttribute("text-anchor", "middle");
+        nextLevelText.setAttribute("font-size", "32");
+        nextLevelText.setAttribute("fill", "white");
+        nextLevelText.setAttribute("font-weight", "bold");
+        nextLevelText.textContent = `Level ${this.currentLevel}`;
+        
         const countdownText = document.createElementNS("http://www.w3.org/2000/svg", "text");
         countdownText.setAttribute("x", this.CONTAINER_WIDTH / 2);
-        countdownText.setAttribute("y", this.CONTAINER_HEIGHT / 2);
+        countdownText.setAttribute("y", this.CONTAINER_HEIGHT / 2 + 30);
         countdownText.setAttribute("text-anchor", "middle");
         countdownText.setAttribute("font-size", "72");
         countdownText.setAttribute("fill", "white");
         countdownText.setAttribute("font-weight", "bold");
         
+        countdownGroup.appendChild(nextLevelText);
         countdownGroup.appendChild(countdownText);
         document.getElementById('game-svg').appendChild(countdownGroup);
         
@@ -878,34 +965,33 @@ class SoloMode extends GameMode {
             } else {
                 clearInterval(countInterval);
                 countdownGroup.remove();
-                this.startNextLevel();
+                
+                // Activate the ball to start the level
+                ball.active = true;
+                ball.element.style.display = 'block';
+                
+                // Resume game
+                this.gameState.gameRunning = true;
+                gameLoop();
             }
         }, 1000);
     }
 
-    startNextLevel() {
-        this.currentLevel++;
-        this.levelScore = 0;
-        this.maxCombo = 0;
-        this.transitionInProgress = false;
-        
-        // Generate new level
-        this.generateLevel();
-        
-        // Reset ball
-        this.reset();
-        
-        // Update UI
-        this.updateSoloUI();
-        
-        // Resume game
-        this.gameState.gameRunning = true;
-        gameLoop();
-    }
 
     handleBallLoss(ballIndex, losingPlayer) {
         // In solo mode, only left side (player) can lose the ball
         if (losingPlayer === 'left') {
+            const ball = this.gameState.balls[ballIndex];
+            
+            // Prevent multiple calls for the same ball loss
+            if (!ball.active) {
+                return;
+            }
+            
+            // Deactivate ball immediately to prevent multiple increments
+            ball.active = false;
+            ball.element.style.display = 'none';
+            
             this.ballsLost++;
             this.combo = 0; // Reset combo
             
@@ -915,15 +1001,8 @@ class SoloMode extends GameMode {
             // Check if player can't recover (no balls left and level incomplete)
             const activeBalls = this.gameState.balls.filter(b => b.active);
             if (activeBalls.length === 0 && this.gameState.bricksRemaining > 0) {
-                // Player loses the ball but can try again
-                const ball = this.gameState.balls[ballIndex];
-                ball.active = false;
-                ball.element.style.display = 'none';
-                
-                // Give player a chance to recover - respawn after short delay
-                setTimeout(() => {
-                    this.respawnBall(ballIndex);
-                }, 1000);
+                // Give player a chance to recover - use existing countdown system
+                startBallCountdown(ballIndex, 'left');
             }
         }
         // Right side collisions are handled in update() method with wall bounce
@@ -931,14 +1010,54 @@ class SoloMode extends GameMode {
     
     respawnBall(ballIndex) {
         const ball = this.gameState.balls[ballIndex];
-        ball.x = 100;
-        ball.y = this.CONTAINER_HEIGHT / 2;
-        ball.speedX = BASE_BALL_SPEED;
+        
+        // Position ball on left paddle
+        ball.x = 30; // Just next to the paddle
+        ball.y = this.gameState.paddleLeftY + PADDLE_HEIGHT / 2; // Center of paddle
+        ball.speedX = this.calculateBallSpeed();
         ball.speedY = generateRandomBallSpeed();
         ball.owner = 'left';
         ball.active = true;
         ball.element.style.display = 'block';
         setBallPosition(ball.element, ball.x, ball.y);
+    }
+    
+    calculateBallSpeed() {
+        // Base speed
+        const baseSpeed = BASE_BALL_SPEED;
+        
+        // Calculate speed increase based on bricks remaining
+        const totalBricks = this.gameState.bricks.length;
+        const bricksRemaining = this.gameState.bricksRemaining;
+        
+        if (totalBricks === 0) return baseSpeed;
+        
+        // Speed increases as fewer bricks remain
+        // When bricksRemaining = 1, speed should be 50% faster
+        // When bricksRemaining = totalBricks, speed should be normal
+        const remainingRatio = bricksRemaining / totalBricks;
+        
+        // Speed multiplier: 1.0 when all bricks remain, 1.5 when 1 brick remains
+        const speedMultiplier = 1 + (1 - remainingRatio) * 0.5;
+        
+        return baseSpeed * speedMultiplier;
+    }
+    
+    updateBallSpeeds() {
+        const newSpeed = this.calculateBallSpeed();
+        
+        // Update all active balls belonging to the player
+        this.gameState.balls.forEach(ball => {
+            if (ball.active && ball.owner === 'left') {
+                // Maintain direction but update speed magnitude only
+                const oldSpeedX = ball.speedX;
+                const direction = ball.speedX > 0 ? 1 : -1;
+                const newSpeedX = newSpeed * direction;
+                
+                // Only update the magnitude, preserve the direction
+                ball.speedX = newSpeedX;
+            }
+        });
     }
 
     gameOver() {
