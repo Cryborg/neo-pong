@@ -36,6 +36,12 @@
                     Brick Practice (2 Players)
                 </label>
             </div>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="gameMode" value="solo">
+                    Solo Adventure
+                </label>
+            </div>
         </div>
         
         <div class="config-section" id="difficulty-section" style="display: none;">
@@ -71,7 +77,9 @@
         
         <div class="config-section">
             <label>Player 1 Controls (Left Paddle):</label>
+            <label for="p1-up">Up key:</label>
             <input type="text" id="p1-up" placeholder="Up key" value="A" maxlength="1">
+            <label for="p1-down">Down key:</label>
             <input type="text" id="p1-down" placeholder="Down key" value="Q" maxlength="1">
         </div>
         
@@ -91,6 +99,8 @@
     <!-- Game Container -->
     <div id="game-container" class="hidden">
         <div id="scoreboard">0 : 0</div>
+        <div id="score-left" class="score-info"></div>
+        <div id="score-right" class="score-info"></div>
         
         <!-- Effect displays outside canvas -->
         <div id="effects-left" class="effects-container left"></div>
@@ -98,15 +108,15 @@
         
         <svg id="game-svg" viewBox="0 0 800 400">
             <!-- Middle dashed line -->
-            <image id="middle-line" x="399" y="0" width="2" height="400" href="icons/middle-line.svg"/>
+            <image id="middle-line" x="399" y="0" width="2" height="400" href="icons/middle-line.svg" role="img" aria-label="Middle line"/>
             
             <!-- Paddles -->
-            <image id="paddle-left" x="10" y="160" width="10" height="80" href="icons/paddle.svg"/>
-            <image id="paddle-right" x="780" y="160" width="10" height="80" href="icons/paddle.svg"/>
+            <image id="paddle-left" x="10" y="160" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Left paddle"/>
+            <image id="paddle-right" x="780" y="160" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Right paddle"/>
             
             <!-- Balls -->
-            <image id="ball" x="394" y="194" width="12" height="12" href="icons/ball.svg"/>
-            <image id="ball2" x="394" y="194" width="12" height="12" href="icons/ball.svg" style="display: none;"/>
+            <image id="ball" x="394" y="194" width="12" height="12" href="icons/ball.svg" role="img" aria-label="Ball"/>
+            <image id="ball2" x="394" y="194" width="12" height="12" href="icons/ball.svg" style="display: none;" role="img" aria-label="Second ball"/>
             
             <!-- Bricks container for brick mode -->
             <g id="bricks-container"></g>
@@ -139,6 +149,7 @@
         </div>
     </div>
 
+    <script src="gameModes.js"></script>
     <script src="game.js"></script>
 </body>
 </html>

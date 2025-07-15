@@ -1,3 +1,7 @@
+:root {
+    --progress: 0;
+}
+
 body {
     margin: 0;
     background-color: #000;
@@ -150,6 +154,23 @@ body {
     z-index: 5;
 }
 
+.score-info {
+    position: absolute;
+    top: 50px;
+    font-size: 16px;
+    color: white;
+    pointer-events: none;
+    z-index: 5;
+}
+
+#score-left {
+    left: 20px;
+}
+
+#score-right {
+    right: 20px;
+}
+
 /* Effect displays */
 .effects-container {
     position: absolute;
@@ -191,7 +212,7 @@ body {
     height: 56px;
     border-radius: 50%;
     pointer-events: none;
-    background: conic-gradient(#4CAF50 calc(var(--progress) * 1%), transparent calc(var(--progress) * 1%));
+    background: conic-gradient(#4CAF50 calc(var(--progress, 0) * 1%), transparent calc(var(--progress, 0) * 1%));
     mask: radial-gradient(circle at center, transparent 18px, black 22px);
     -webkit-mask: radial-gradient(circle at center, transparent 18px, black 22px);
     transition: background 0.1s linear;
@@ -199,7 +220,7 @@ body {
 }
 
 .effect-progress.debuff {
-    background: conic-gradient(#F44336 calc(var(--progress) * 1%), transparent calc(var(--progress) * 1%));
+    background: conic-gradient(#F44336 calc(var(--progress, 0) * 1%), transparent calc(var(--progress, 0) * 1%));
 }
 
 /* Pause Screen */

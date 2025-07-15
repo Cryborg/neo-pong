@@ -35,8 +35,8 @@ const PADDLE_WIDTH = 10;
 const BALL_RADIUS = 6;
 const BASE_PADDLE_SPEED = 6;
 const BASE_BALL_SPEED = 4;
-const BRICK_WIDTH = 20;
-const BRICK_HEIGHT = 45;
+const BRICK_WIDTH = 40;
+const BRICK_HEIGHT = 40;
 const BRICK_ROWS = 6;
 const BRICK_PADDING = 5;
 
@@ -181,6 +181,9 @@ let gameState = {
     lasers: []
 };
 
+// Game mode instance
+let currentGameMode = null;
+
 // Configuration event listeners
 document.querySelectorAll('input[name="gameMode"]').forEach(radio => {
     radio.addEventListener('change', (e) => {
@@ -195,6 +198,10 @@ document.querySelectorAll('input[name="gameMode"]').forEach(radio => {
         } else if (e.target.value === 'brick2p') {
             difficultySection.style.display = 'none';
             p2ControlsSection.style.display = 'block';
+            maxScoreSection.style.display = 'none';
+        } else if (e.target.value === 'solo') {
+            difficultySection.style.display = 'none';
+            p2ControlsSection.style.display = 'none';
             maxScoreSection.style.display = 'none';
         } else {
             difficultySection.style.display = 'none';
@@ -322,8 +329,7 @@ function activateMenuElement() {
     } else if (element.tagName === 'SELECT') {
         // For selects, cycle through options
         const currentIndex = element.selectedIndex;
-        const nextIndex = (currentIndex + 1) % element.options.length;
-        element.selectedIndex = nextIndex;
+        element.selectedIndex = (currentIndex + 1) % element.options.length;
         element.dispatchEvent(new Event('change'));
     } else if (element.tagName === 'BUTTON') {
         element.click();
@@ -466,20 +472,27 @@ function startGame() {
     backgroundPreview.classList.add('hidden');
     gameContainer.classList.remove('hidden');
     
-    // Setup game based on mode
-    if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-        // Both brick modes: 2 balls, bricks, same rules
-        paddleRight.style.display = 'block';
-        ball2.style.display = 'block';
-        gameState.balls[1].active = true;
-        createBricks();
-    } else {
-        // Standard pong modes: 1 ball, no bricks
-        paddleRight.style.display = 'block';
-        ball2.style.display = 'none';
-        gameState.balls[1].active = false;
-        clearBricks();
+    // Create appropriate game mode instance
+    switch(gameConfig.mode) {
+        case 'pvp':
+            currentGameMode = new PvPMode(gameState, gameConfig, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            break;
+        case 'pvai':
+            currentGameMode = new PvAIMode(gameState, gameConfig, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            break;
+        case 'brick':
+            currentGameMode = new BrickMode(gameState, gameConfig, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            break;
+        case 'brick2p':
+            currentGameMode = new Brick2PMode(gameState, gameConfig, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            break;
+        case 'solo':
+            currentGameMode = new SoloMode(gameState, gameConfig, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            break;
     }
+    
+    // Initialize the game mode
+    currentGameMode.initialize();
     
     // Initialize game state
     resetGame();
@@ -556,20 +569,6 @@ function resetGame() {
         }
     }
     
-    // Then configure the 2 main balls based on mode
-    if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-        // Both brick modes: 2 balls
-        ball2.style.display = 'block';
-        gameState.balls[1].active = true;
-    } else {
-        // Standard pong modes: 1 ball only
-        ball2.style.display = 'none';
-        gameState.balls[1].active = false;
-    }
-    
-    resetBalls();
-    updateScore();
-    
     // Clear all bonuses and effects
     clearBonuses();
     clearLasers();
@@ -598,10 +597,15 @@ function resetGame() {
     setPaddlePosition(paddleLeft, 10, gameState.paddleLeftY);
     setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
     
-    // Reset bricks if in brick mode
-    if ((gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') && gameState.bricksRemaining === 0) {
-        createBricks();
+    // Let the game mode handle the rest of the reset
+    if (currentGameMode) {
+        currentGameMode.reset();
+    } else {
+        // Fallback for old logic
+        resetBalls();
     }
+    
+    updateScore();
 }
 
 function clearBonuses() {
@@ -1021,6 +1025,14 @@ function explodeBricks(centerX, centerY, explosionRadius, ballOwner) {
 }
 
 function checkBrickCollision(ball, ballIndex) {
+    // Let game mode handle brick collisions if it wants to
+    if (currentGameMode && currentGameMode.update) {
+        // Solo mode handles its own brick collisions
+        if (gameConfig.mode === 'solo') {
+            return false;
+        }
+    }
+    
     const nextBallX = ball.x + ball.speedX;
     const nextBallY = ball.y + ball.speedY;
     
@@ -1189,64 +1201,14 @@ function updateBalls() {
         
         // Scoring
         if (ball.x < 0) {
-            console.log(`DEBUG: Ball ${i} went out left side (x=${ball.x}), starting countdown for left player`);
-            if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-                // In brick modes, award point and handle ball respawn
-                gameState.rightScore++;
-                updateScore();
-                handleBrickModeballLoss(i, 'left'); // Handle ball loss in brick mode
-            } else {
-                gameState.rightScore++;
-                updateScore();
-                if (gameState.rightScore >= gameConfig.maxScore) {
-                    gameOver("Player 2");
-                } else {
-                    // Deactivate the ball that went out
-                    ball.active = false;
-                    ball.element.style.display = 'none';
-                    
-                    // Only start countdown if less than 2 balls remain in total
-                    const activeBalls = gameState.balls.filter(b => b.active);
-                    if (activeBalls.length < 2) {
-                        // Check if left player has no balls coming towards them
-                        const ballsTowardLeft = activeBalls.filter(b => b.speedX < 0); // Moving left
-                        if (ballsTowardLeft.length === 0) {
-                            // Left player has no incoming balls, start countdown for them
-                            startBallCountdown(i, 'left');
-                        }
-                    }
-                }
+            if (currentGameMode) {
+                currentGameMode.handleBallLoss(i, 'left');
             }
         }
         
         if (ball.x > CONTAINER_WIDTH) {
-            console.log(`DEBUG: Ball ${i} went out right side (x=${ball.x}), starting countdown for right player`);
-            if (gameConfig.mode === 'brick' || gameConfig.mode === 'brick2p') {
-                // In brick modes, award point and handle ball respawn
-                gameState.leftScore++;
-                updateScore();
-                handleBrickModeballLoss(i, 'right'); // Handle ball loss in brick mode
-            } else {
-                gameState.leftScore++;
-                updateScore();
-                if (gameState.leftScore >= gameConfig.maxScore) {
-                    gameOver("Player 1");
-                } else {
-                    // Deactivate the ball that went out
-                    ball.active = false;
-                    ball.element.style.display = 'none';
-                    
-                    // Only start countdown if less than 2 balls remain in total
-                    const activeBalls = gameState.balls.filter(b => b.active);
-                    if (activeBalls.length < 2) {
-                        // Check if right player has no balls coming towards them
-                        const ballsTowardRight = activeBalls.filter(b => b.speedX > 0); // Moving right
-                        if (ballsTowardRight.length === 0) {
-                            // Right player has no incoming balls, start countdown for them
-                            startBallCountdown(i, 'right');
-                        }
-                    }
-                }
+            if (currentGameMode) {
+                currentGameMode.handleBallLoss(i, 'right');
             }
         }
         
@@ -1256,17 +1218,21 @@ function updateBalls() {
 }
 
 function updateScore() {
-    // Create styled score display
-    let leftStyle = '';
-    let rightStyle = '';
-    
-    if (gameState.leftScore > gameState.rightScore) {
-        leftStyle = 'font-weight: bold; color: #4CAF50;'; // Green for leader
-    } else if (gameState.rightScore > gameState.leftScore) {
-        rightStyle = 'font-weight: bold; color: #4CAF50;'; // Green for leader
+    if (currentGameMode && currentGameMode.getScoreDisplay) {
+        scoreboard.innerHTML = currentGameMode.getScoreDisplay();
+    } else {
+        // Fallback to default score display
+        let leftStyle = '';
+        let rightStyle = '';
+        
+        if (gameState.leftScore > gameState.rightScore) {
+            leftStyle = 'font-weight: bold; color: #4CAF50;'; // Green for leader
+        } else if (gameState.rightScore > gameState.leftScore) {
+            rightStyle = 'font-weight: bold; color: #4CAF50;'; // Green for leader
+        }
+        
+        scoreboard.innerHTML = `<span style="${leftStyle}">${gameState.leftScore}</span> : <span style="${rightStyle}">${gameState.rightScore}</span>`;
     }
-    
-    scoreboard.innerHTML = `<span style="${leftStyle}">${gameState.leftScore}</span> : <span style="${rightStyle}">${gameState.rightScore}</span>`;
 }
 
 function gameOver(winner) {
@@ -1300,6 +1266,12 @@ function gameLoop() {
     if (gameState.gameRunning && !gameState.paused) {
         updatePaddles();
         updateBalls();
+        
+        // Let game mode do additional updates
+        if (currentGameMode && currentGameMode.update) {
+            currentGameMode.update();
+        }
+        
         updateBonuses();
         updateLasers();
         updateAutoLasers();
@@ -1579,7 +1551,16 @@ function getEffectColor(effectType) {
 
 // Bonus System
 function generateBonus(x, y, ballOwner) {
-    const bonusTypes = Object.values(BONUS_TYPES);
+    let bonusTypes = Object.values(BONUS_TYPES);
+    
+    // Remove ghost and slow ball bonuses in solo mode as they don't make sense
+    if (gameConfig.mode === 'solo') {
+        bonusTypes = bonusTypes.filter(type => 
+            type !== BONUS_TYPES.GHOST_BALL && 
+            type !== BONUS_TYPES.SLOW_BALL
+        );
+    }
+    
     const randomType = bonusTypes[Math.floor(Math.random() * bonusTypes.length)];
     
     const bonus = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -1763,13 +1744,16 @@ function applyBonus(type, player) {
             break;
             
         case BONUS_TYPES.LASER_PADDLE:
+            // Double laser duration in solo mode
+            const laserDuration = gameConfig.mode === 'solo' ? 6000 : 3000;
+            
             if (effects.laser) {
                 // Extend existing effect
-                effects.laser.duration += 3000;
+                effects.laser.duration += laserDuration;
             } else {
                 // Create new effect
                 effects.laser = {
-                    duration: 3000,
+                    duration: laserDuration,
                     startTime: Date.now(),
                     lastShot: 0,
                     shootInterval: 500 // Shoot every 500ms
@@ -2155,52 +2139,94 @@ function checkLaserBrickCollision(laser) {
             laser.x >= brick.x && laser.x <= brick.x + brick.width &&
             laser.y >= brick.y && laser.y <= brick.y + brick.height) {
             
-            // Destroy brick
-            brick.destroyed = true;
-            brick.element.style.display = 'none';
-            gameState.bricksRemaining--;
-            
-            // Generate bonus with 10% chance
-            if (Math.random() < 0.1) {
-                generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, laser.owner);
-            }
-            
-            // Award points based on laser ownership (both brick modes)
-            if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
-                if (laser.owner === 'left') {
-                    gameState.leftScore++;
-                } else if (laser.owner === 'right') {
-                    gameState.rightScore++;
+            // Handle laser collision differently for solo mode
+            if (gameConfig.mode === 'solo') {
+                // In solo mode, laser damages brick instead of destroying it
+                if (brick.isIndestructible) {
+                    return true; // Laser is stopped by indestructible brick
                 }
                 
-                // Award bonus points if this was the last brick
-                if (gameState.bricksRemaining === 0) {
-                    if (laser.owner === 'left') {
-                        gameState.leftScore += 10;
-                    } else if (laser.owner === 'right') {
-                        gameState.rightScore += 10;
+                brick.health--;
+                
+                if (brick.health <= 0) {
+                    // Brick is destroyed
+                    brick.destroyed = true;
+                    brick.element.style.display = 'none';
+                    gameState.bricksRemaining--;
+                    
+                    // Generate bonus with 30% chance (doubled from 15%)
+                    if (Math.random() < 0.3) {
+                        generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, laser.owner);
                     }
-                }
-                
-                updateScore();
-            }
-            
-            // Check if all bricks are destroyed
-            if (gameState.bricksRemaining === 0) {
-                if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
-                    if (gameState.leftScore > gameState.rightScore) {
-                        gameOver("Player 1");
-                    } else if (gameState.rightScore > gameState.leftScore) {
-                        gameOver("Player 2");
-                    } else {
-                        gameOver("Draw");
+                    
+                    // Check if all bricks are destroyed
+                    if (gameState.bricksRemaining === 0) {
+                        if (currentGameMode && currentGameMode.completeLevel) {
+                            currentGameMode.completeLevel();
+                        }
                     }
                 } else {
-                    gameOver("All Bricks Destroyed!");
+                    // Update brick appearance
+                    const hue = 0; // Red for damaged
+                    const lightness = 50 - (brick.health - 1) * 5;
+                    brick.rect.setAttribute("fill", `hsl(${hue}, 70%, ${lightness}%)`);
+                    
+                    // Update health text
+                    const text = brick.element.querySelector('text');
+                    if (text) {
+                        text.textContent = brick.health;
+                    }
                 }
+                
+                return true;
+            } else {
+                // Original behavior for other modes
+                brick.destroyed = true;
+                brick.element.style.display = 'none';
+                gameState.bricksRemaining--;
+                
+                // Generate bonus with 10% chance
+                if (Math.random() < 0.1) {
+                    generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, laser.owner);
+                }
+                
+                // Award points based on laser ownership (both brick modes)
+                if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                    if (laser.owner === 'left') {
+                        gameState.leftScore++;
+                    } else if (laser.owner === 'right') {
+                        gameState.rightScore++;
+                    }
+                    
+                    // Award bonus points if this was the last brick
+                    if (gameState.bricksRemaining === 0) {
+                        if (laser.owner === 'left') {
+                            gameState.leftScore += 10;
+                        } else if (laser.owner === 'right') {
+                            gameState.rightScore += 10;
+                        }
+                    }
+                    
+                    updateScore();
+                }
+                
+                // Check if all bricks are destroyed
+                if (gameState.bricksRemaining === 0) {
+                    if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                        if (gameState.leftScore > gameState.rightScore) {
+                            gameOver("Player 1");
+                        } else if (gameState.rightScore > gameState.leftScore) {
+                            gameOver("Player 2");
+                        } else {
+                            gameOver("Draw");
+                        }
+                    } else {
+                        gameOver("All Bricks Destroyed!");
+                    }
+                }
+                
+                return true;
             }
-            
-            return true;
         }
     }
     return false;
