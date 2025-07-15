@@ -65,15 +65,6 @@
             </select>
         </div>
         
-        <div class="config-section">
-            <label for="field-width">Field Width:</label>
-            <select id="field-width">
-                <option value="800">Standard (800px)</option>
-                <option value="1200">Wide (1200px)</option>
-                <option value="1600">Ultra Wide (1600px)</option>
-                <option value="2000">Mega Wide (2000px)</option>
-            </select>
-        </div>
         
         <div class="config-section">
             <label>Player 1 Controls (Left Paddle):</label>
@@ -106,17 +97,17 @@
         <div id="effects-left" class="effects-container left"></div>
         <div id="effects-right" class="effects-container right"></div>
         
-        <svg id="game-svg" viewBox="0 0 800 400">
+        <svg id="game-svg" viewBox="0 0 800 600">
             <!-- Middle dashed line -->
-            <image id="middle-line" x="399" y="0" width="2" height="400" href="icons/middle-line.svg" role="img" aria-label="Middle line"/>
+            <image id="middle-line" x="399" y="0" width="2" height="600" href="icons/middle-line.svg" role="img" aria-label="Middle line"/>
             
             <!-- Paddles -->
-            <image id="paddle-left" x="10" y="160" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Left paddle"/>
-            <image id="paddle-right" x="780" y="160" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Right paddle"/>
+            <image id="paddle-left" x="10" y="260" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Left paddle"/>
+            <image id="paddle-right" x="780" y="260" width="10" height="80" href="icons/paddle.svg" role="img" aria-label="Right paddle"/>
             
             <!-- Balls -->
-            <image id="ball" x="394" y="194" width="12" height="12" href="icons/ball.svg" role="img" aria-label="Ball"/>
-            <image id="ball2" x="394" y="194" width="12" height="12" href="icons/ball.svg" style="display: none;" role="img" aria-label="Second ball"/>
+            <image id="ball" x="394" y="294" width="12" height="12" href="icons/ball.svg" role="img" aria-label="Ball"/>
+            <image id="ball2" x="394" y="294" width="12" height="12" href="icons/ball.svg" style="display: none;" role="img" aria-label="Second ball"/>
             
             <!-- Bricks container for brick mode -->
             <g id="bricks-container"></g>
@@ -149,6 +140,7 @@
         </div>
     </div>
 
+    <script src="levelData.js"></script>
     <script src="gameModes.js"></script>
     <script src="game.js"></script>
 </body>

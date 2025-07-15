@@ -31,6 +31,29 @@ class GameMode {
     getScoreDisplay() {
         return `${this.gameState.leftScore} : ${this.gameState.rightScore}`;
     }
+
+    // Utility methods that can be used by all game modes
+
+    updateGameScore() {
+        updateScore();
+    }
+
+    getBallOwner(ballIndex) {
+        // Default implementation for brick modes
+        return ballIndex === 0 ? 'left' : 'right';
+    }
+
+    isGameRunning() {
+        return this.gameState.gameRunning;
+    }
+
+    pauseGame() {
+        this.gameState.gameRunning = false;
+    }
+
+    resumeGame() {
+        this.gameState.gameRunning = true;
+    }
 }
 
 // PvP Mode
@@ -45,17 +68,8 @@ class PvPMode extends GameMode {
         
         // Clear bricks
         clearBricks();
-        
-        // Clear solo mode UI elements
-        this.clearSoloUI();
     }
     
-    clearSoloUI() {
-        const leftScore = document.getElementById('score-left');
-        const rightScore = document.getElementById('score-right');
-        if (leftScore) leftScore.textContent = '';
-        if (rightScore) rightScore.textContent = '';
-    }
 
     reset() {
         // Single ball mode
@@ -124,17 +138,8 @@ class PvAIMode extends GameMode {
         
         paddleRight.style.display = 'block';
         clearBricks();
-        
-        // Clear solo mode UI elements
-        this.clearSoloUI();
     }
     
-    clearSoloUI() {
-        const leftScore = document.getElementById('score-left');
-        const rightScore = document.getElementById('score-right');
-        if (leftScore) leftScore.textContent = '';
-        if (rightScore) rightScore.textContent = '';
-    }
 
     reset() {
         // Single ball mode, always starts from player
@@ -173,17 +178,8 @@ class BrickMode extends GameMode {
         ball2.style.display = 'block';
         this.gameState.balls[1].active = true;
         createBricks();
-        
-        // Clear solo mode UI elements
-        this.clearSoloUI();
     }
     
-    clearSoloUI() {
-        const leftScore = document.getElementById('score-left');
-        const rightScore = document.getElementById('score-right');
-        if (leftScore) leftScore.textContent = '';
-        if (rightScore) rightScore.textContent = '';
-    }
 
     reset() {
         // Both brick modes: each ball starts from its respective paddle
@@ -209,7 +205,33 @@ class BrickMode extends GameMode {
         }
         
         updateScore();
-        handleBrickModeballLoss(ballIndex, losingPlayer);
+        this.handleBrickSpecificBallLoss(ballIndex, losingPlayer);
+    }
+
+    handleBrickSpecificBallLoss(ballIndex, losingPlayer) {
+        const ball = this.gameState.balls[ballIndex];
+        ball.active = false;
+        ball.element.style.display = 'none';
+        
+        console.log(`DEBUG: Ball ${ballIndex} lost by ${losingPlayer} in brick mode`);
+        
+        // In brick mode, determine ball ownership:
+        // Ball 0 belongs to left player, Ball 1 belongs to right player
+        const ballOwner = ballIndex === 0 ? 'left' : 'right';
+        
+        console.log(`DEBUG: Ball ${ballIndex} owner is ${ballOwner}, losing player is ${losingPlayer}`);
+        
+        if (ballOwner === losingPlayer) {
+            // This ball belongs to the losing player - start countdown
+            console.log(`DEBUG: Ball ${ballIndex} belongs to losing player ${losingPlayer} - starting countdown`);
+            startBallCountdown(ballIndex, losingPlayer);
+        } else {
+            // This ball belongs to the winning player - respawn immediately for the winner
+            console.log(`DEBUG: Ball ${ballIndex} belongs to winning player ${ballOwner} - respawning immediately for ${ballOwner}`);
+            setTimeout(() => {
+                resetSingleBall(ballIndex, ballOwner); // Use ballOwner, not losingPlayer
+            }, 100); // Small delay to avoid visual glitches
+        }
     }
 
     checkGameOver() {
@@ -279,11 +301,135 @@ class SoloMode extends GameMode {
         this.gameState.bricks = [];
         this.gameState.bricksRemaining = 0;
         
-        // Choose pattern based on level
+        // Try to load level from data, fallback to generated patterns if not found
+        try {
+            this.loadLevelFromFile();
+        } catch (error) {
+            console.warn(`Failed to load level ${this.currentLevel} from data, using generated pattern:`, error);
+            this.generateFallbackLevel();
+        }
+    }
+
+    loadLevelFromFile() {
+        const content = getLevelData(this.currentLevel);
+        
+        if (!content) {
+            throw new Error(`Level ${this.currentLevel} not found in level data`);
+        }
+        
+        this.parseASCIILevelFile(content);
+    }
+
+    parseASCIILevelFile(content) {
+        const lines = content.split('\n');
+        let inMapping = false;
+        let inLevel = false;
+        let mapping = {};
+        let levelLines = [];
+        
+        // Parse file sections
+        for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // Skip empty lines and comments (but not in level section)
+            if (!inLevel && (!trimmed || trimmed.startsWith('#'))) {
+                if (trimmed === '# MAPPING') {
+                    inMapping = true;
+                } else if (trimmed === '# ENDMAPPING') {
+                    inMapping = false;
+                } else if (trimmed === '# LEVEL') {
+                    inLevel = true;
+                } else if (trimmed === '# ENDLEVEL') {
+                    inLevel = false;
+                }
+                continue;
+            }
+            
+            if (inMapping) {
+                // Parse mapping: "A = 3 #ff0000" or "I = indestructible #888888"
+                const match = line.match(/^(.)\s*=\s*(\w+)\s*(#[0-9a-fA-F]{6})?/);
+                if (match) {
+                    const char = match[1];
+                    const healthOrType = match[2];
+                    const color = match[3] || '#ffffff';
+                    
+                    mapping[char] = {
+                        health: healthOrType === 'indestructible' ? 1 : parseInt(healthOrType),
+                        isIndestructible: healthOrType === 'indestructible',
+                        color: color
+                    };
+                }
+            } else if (inLevel) {
+                levelLines.push(line);
+            }
+        }
+        
+        // Mapping is required - no fallback to simple format
+        if (Object.keys(mapping).length === 0) {
+            throw new Error('Level file must contain a MAPPING section');
+        }
+        
+        // Convert ASCII level to bricks
+        this.createBricksFromASCII(levelLines, mapping);
+    }
+    
+    getDefaultColor(intensity) {
+        // Generate color based on intensity (0-1)
+        const hue = intensity * 360;
+        return `hsl(${hue}, 70%, 50%)`;
+    }
+    
+    createBricksFromASCII(levelLines, mapping) {
+        const startY = 50; // Start near top of screen
+        const brickSpacing = BRICK_WIDTH + 2; // Small gap between bricks (34px total)
+        const lineHeight = BRICK_HEIGHT + 2; // Line height (18px total)
+        const paddleZone = 80; // Keep bricks away from paddle area
+        const rightMargin = BRICK_WIDTH; // One brick width from right edge
+        
+        for (let row = 0; row < levelLines.length; row++) {
+            let line = levelLines[row];
+            
+            // Handle quoted lines to preserve trailing spaces
+            if (line.startsWith("'") && line.endsWith("'")) {
+                line = line.slice(1, -1); // Remove quotes
+            }
+            
+            // Use the full line length to respect trailing spaces in quoted lines
+            const lineLength = line.length;
+            
+            // Position so THIS line (with its actual length) would end at CONTAINER_WIDTH - rightMargin
+            // This way trailing spaces create real gaps/corridors
+            const startX = CONTAINER_WIDTH - rightMargin - BRICK_WIDTH - ((lineLength - 1) * brickSpacing);
+            
+            for (let col = 0; col < line.length; col++) {
+                const char = line[col];
+                
+                // Skip spaces (no brick)
+                if (char === ' ' || !mapping[char]) {
+                    continue;
+                }
+                
+                const brickData = mapping[char];
+                const x = startX + col * brickSpacing;
+                const y = row * lineHeight + startY;
+                
+                // Don't place bricks too close to paddle
+                if (x < paddleZone) {
+                    continue;
+                }
+                
+                // Create brick with custom color
+                const colorIndex = 0.5; // Will be overridden by custom color
+                this.createBrick(x, y, brickData.health, brickData.isIndestructible, colorIndex, brickData.color);
+            }
+        }
+    }
+
+    generateFallbackLevel() {
+        // Fallback to original pattern generation if file loading fails
         const patternIndex = (this.currentLevel - 1) % this.levelPatterns.length;
         const pattern = this.levelPatterns[patternIndex];
         const difficulty = Math.floor((this.currentLevel - 1) / this.levelPatterns.length) + 1;
-        
         
         switch(pattern) {
             case 'circle':
@@ -311,14 +457,13 @@ class SoloMode extends GameMode {
     }
 
     generateCirclePattern(difficulty) {
-        // In solo mode, use more of the available width (adapt to terrain size)
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5); // Center in usable space
-        const centerY = this.CONTAINER_HEIGHT / 2;
+        // Fixed dimensions for 800x600 terrain
+        const usableWidth = 600; // Leave space for paddle area
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
         
-        // Much larger patterns for wide screens
-        const maxRadius = Math.min(usableWidth * 0.6, this.CONTAINER_HEIGHT * 0.6);
-        console.log(`DEBUG: Circle pattern - usableWidth: ${usableWidth}, maxRadius: ${maxRadius}, centerX: ${centerX}`);
+        // Reasonable pattern size for 800x600
+        const maxRadius = Math.min(200, 180); // Max radius of 180px
         const layers = 3 + Math.floor(difficulty / 2);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -341,11 +486,10 @@ class SoloMode extends GameMode {
     }
 
     generateSquarePattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const centerY = this.CONTAINER_HEIGHT / 2;
-        const maxSize = Math.min(usableWidth * 0.8, this.CONTAINER_HEIGHT * 0.8);
-        console.log(`DEBUG: Square pattern - usableWidth: ${usableWidth}, maxSize: ${maxSize}`);
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
+        const maxSize = 350; // Maximum square size
         const layers = 3 + Math.floor(difficulty / 2);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -386,10 +530,10 @@ class SoloMode extends GameMode {
     }
 
     generateDiamondPattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const centerY = this.CONTAINER_HEIGHT / 2;
-        const rows = 7 + difficulty;
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
+        const rows = Math.min(7 + difficulty, 12); // Cap at 12 rows for 600px height
         
         for (let row = 0; row < rows; row++) {
             const halfRows = rows / 2;
@@ -410,10 +554,10 @@ class SoloMode extends GameMode {
     }
 
     generateHeartPattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const centerY = this.CONTAINER_HEIGHT / 2;
-        const scale = Math.min(usableWidth, this.CONTAINER_HEIGHT) * 0.04;
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
+        const scale = 8; // Fixed scale for heart pattern
         
         // Heart shape equation points
         const points = [];
@@ -441,10 +585,10 @@ class SoloMode extends GameMode {
     }
 
     generateSpiralPattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const centerY = this.CONTAINER_HEIGHT / 2;
-        const maxRadius = Math.min(usableWidth * 0.4, this.CONTAINER_HEIGHT * 0.4);
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
+        const maxRadius = 150; // Fixed maximum radius
         const spirals = 2 + Math.floor(difficulty / 3);
         const pointsPerSpiral = 15 + difficulty * 3;
         
@@ -468,11 +612,11 @@ class SoloMode extends GameMode {
     }
 
     generateTrianglePattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const baseY = this.CONTAINER_HEIGHT * 0.7;
-        const height = this.CONTAINER_HEIGHT * 0.5;
-        const rows = 6 + difficulty;
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const baseY = 450; // Base of triangle (75% of 600px height)
+        const height = 250; // Triangle height
+        const rows = Math.min(6 + difficulty, 10); // Cap at 10 rows
         
         for (let row = 0; row < rows; row++) {
             const bricksInRow = row + 1;
@@ -491,10 +635,10 @@ class SoloMode extends GameMode {
     }
 
     generateHexagonPattern(difficulty) {
-        const usableWidth = this.CONTAINER_WIDTH - 100; // Leave 100px for paddle area
-        const centerX = 100 + (usableWidth * 0.5);
-        const centerY = this.CONTAINER_HEIGHT / 2;
-        const size = Math.min(usableWidth * 0.4, this.CONTAINER_HEIGHT * 0.4);
+        // Fixed dimensions for 800x600 terrain
+        const centerX = 400; // Center of 800px width
+        const centerY = 300; // Center of 600px height
+        const size = 160; // Fixed hexagon size
         const layers = 3 + Math.floor(difficulty / 3);
         
         for (let layer = 0; layer < layers; layer++) {
@@ -520,7 +664,7 @@ class SoloMode extends GameMode {
         }
     }
 
-    createBrick(x, y, health, isIndestructible, colorIndex) {
+    createBrick(x, y, health, isIndestructible, colorIndex, customColor = null) {
         const brick = document.createElementNS("http://www.w3.org/2000/svg", "g");
         const brickId = `brick-solo-${Date.now()}-${Math.random()}`;
         brick.setAttribute("id", brickId);
@@ -533,12 +677,16 @@ class SoloMode extends GameMode {
         rect.setAttribute("height", BRICK_HEIGHT);
         
         if (isIndestructible) {
-            rect.setAttribute("fill", "#333");
+            rect.setAttribute("fill", customColor || "#333");
             rect.setAttribute("stroke", "#666");
         } else {
-            const hue = colorIndex * 360;
-            const lightness = 50 - (health - 1) * 5; // Darker = more health
-            rect.setAttribute("fill", `hsl(${hue}, 70%, ${lightness}%)`);
+            if (customColor) {
+                rect.setAttribute("fill", customColor);
+            } else {
+                const hue = colorIndex * 360;
+                const lightness = 50 - (health - 1) * 5; // Darker = more health
+                rect.setAttribute("fill", `hsl(${hue}, 70%, ${lightness}%)`);
+            }
             rect.setAttribute("stroke", "white");
         }
         
@@ -632,149 +780,16 @@ class SoloMode extends GameMode {
             }
         }
         
-        // Check for brick collisions with special handling for health
+        // Use centralized brick collision detection
         for (let i = 0; i < this.gameState.balls.length; i++) {
             const ball = this.gameState.balls[i];
             if (!ball.active) continue;
             
-            const nextBallX = ball.x + ball.speedX;
-            const nextBallY = ball.y + ball.speedY;
-            
-            
-            for (let brick of this.gameState.bricks) {
-                if (!brick.destroyed && !brick.isIndestructible) {
-                    if (nextBallX + BALL_RADIUS >= brick.x &&
-                        nextBallX - BALL_RADIUS <= brick.x + brick.width &&
-                        nextBallY + BALL_RADIUS >= brick.y &&
-                        nextBallY - BALL_RADIUS <= brick.y + brick.height) {
-                        
-                        // Handle collision
-                        this.handleBrickHit(brick, ball, i);
-                        
-                        // Bounce ball
-                        const ballCenterX = ball.x;
-                        const ballCenterY = ball.y;
-                        const brickCenterX = brick.x + brick.width / 2;
-                        const brickCenterY = brick.y + brick.height / 2;
-                        
-                        const dx = ballCenterX - brickCenterX;
-                        const dy = ballCenterY - brickCenterY;
-                        
-                        const overlapX = (brick.width / 2 + BALL_RADIUS) - Math.abs(dx);
-                        const overlapY = (brick.height / 2 + BALL_RADIUS) - Math.abs(dy);
-                        
-                        const oldSpeedX = ball.speedX;
-                        const oldSpeedY = ball.speedY;
-                        
-                        // Check for corner collision
-                        const cornerThreshold = 3; // Pixels - adjust for sensitivity
-                        const isCorner = Math.abs(overlapX - overlapY) < cornerThreshold;
-                        
-                        if (isCorner) {
-                            // Corner collision - bounce both directions
-                            ball.speedX *= -1;
-                            ball.speedY *= -1;
-                            
-                            // Position ball outside the brick in both directions
-                            if (dx < 0) {
-                                ball.x = brick.x - BALL_RADIUS;
-                            } else {
-                                ball.x = brick.x + brick.width + BALL_RADIUS;
-                            }
-                            if (dy < 0) {
-                                ball.y = brick.y - BALL_RADIUS;
-                            } else {
-                                ball.y = brick.y + brick.height + BALL_RADIUS;
-                            }
-                        } else if (overlapX < overlapY) {
-                            // Horizontal collision (left/right side)
-                            ball.speedX *= -1;
-                            if (dx < 0) {
-                                ball.x = brick.x - BALL_RADIUS;
-                            } else {
-                                ball.x = brick.x + brick.width + BALL_RADIUS;
-                            }
-                        } else {
-                            // Vertical collision (top/bottom side)
-                            ball.speedY *= -1;
-                            if (dy < 0) {
-                                ball.y = brick.y - BALL_RADIUS;
-                            } else {
-                                ball.y = brick.y + brick.height + BALL_RADIUS;
-                            }
-                        }
-                        
-                        break; // Only handle one collision per frame
-                    }
-                }
-            }
+            // Use the centralized collision detection with solo-specific handling
+            checkBrickCollision(ball, i, true);
         }
     }
 
-    handleBrickHit(brick, ball, ballIndex) {
-        if (brick.isIndestructible) return;
-        
-        // Check for explosive ball
-        const explosiveInfo = this.gameState.explosiveBalls[ballIndex];
-        if (explosiveInfo) {
-            // Explosive hit
-            const brickCenterX = brick.x + brick.width / 2;
-            const brickCenterY = brick.y + brick.height / 2;
-            this.explodeBricksSolo(brickCenterX, brickCenterY, 60);
-        } else {
-            // Normal hit
-            brick.health--;
-            this.combo++;
-            this.maxCombo = Math.max(this.maxCombo, this.combo);
-            
-            if (brick.health <= 0) {
-                // Brick destroyed
-                brick.destroyed = true;
-                brick.element.style.display = 'none';
-                this.gameState.bricksRemaining--;
-                
-                // Score calculation
-                const baseScore = 10 * brick.maxHealth;
-                const comboBonus = this.combo * 5;
-                const levelBonus = this.currentLevel * 2;
-                const score = baseScore + comboBonus + levelBonus;
-                
-                this.levelScore += score;
-                this.totalScore += score;
-                
-                // Chance for bonus (doubled in solo mode)
-                if (Math.random() < 0.3) {
-                    generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, 'left');
-                }
-                
-                // Update ball speed based on progress
-                this.updateBallSpeeds();
-                
-                // Check level complete
-                if (this.gameState.bricksRemaining === 0) {
-                    this.completeLevel();
-                }
-            } else {
-                // Update brick appearance
-                const hue = 0; // Red for damaged
-                const lightness = 50 - (brick.health - 1) * 5;
-                brick.rect.setAttribute("fill", `hsl(${hue}, 70%, ${lightness}%)`);
-                
-                // Update health text
-                const text = brick.element.querySelector('text');
-                if (text) {
-                    text.textContent = brick.health;
-                }
-                
-                // Small score for hit
-                const hitScore = 5 * this.currentLevel;
-                this.levelScore += hitScore;
-                this.totalScore += hitScore;
-            }
-            
-            updateScore();
-        }
-    }
 
     explodeBricksSolo(centerX, centerY, radius) {
         createExplosionAnimation(centerX, centerY);
@@ -935,6 +950,16 @@ class SoloMode extends GameMode {
         const countdownGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         countdownGroup.setAttribute("id", "level-countdown");
         
+        // Background overlay for better readability
+        const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        background.setAttribute("x", "0");
+        background.setAttribute("y", "0");
+        background.setAttribute("width", this.CONTAINER_WIDTH);
+        background.setAttribute("height", this.CONTAINER_HEIGHT);
+        background.setAttribute("fill", "black");
+        background.setAttribute("opacity", "0.8");
+        countdownGroup.appendChild(background);
+        
         // Add next level text
         const nextLevelText = document.createElementNS("http://www.w3.org/2000/svg", "text");
         nextLevelText.setAttribute("x", this.CONTAINER_WIDTH / 2);
@@ -1092,6 +1117,11 @@ class SoloMode extends GameMode {
 
     getScoreDisplay() {
         return `Score: ${this.totalScore} | High: ${this.highScore}`;
+    }
+
+    // Override ball owner logic for solo mode
+    getBallOwner(ballIndex) {
+        return 'left'; // In solo mode, all balls belong to the player
     }
 }
 

@@ -1,3 +1,11 @@
+//====================================================================
+// PONG GAME v0.3 - MAIN ENGINE
+//====================================================================
+
+//====================================================================
+// 1. DOM ELEMENTS & CONSTANTS
+//====================================================================
+
 // DOM Elements
 const configScreen = document.getElementById("config-screen");
 const gameContainer = document.getElementById("game-container");
@@ -16,7 +24,6 @@ const playAgainButton = document.getElementById("play-again");
 const backToMenuButton = document.getElementById("back-to-menu");
 const winnerText = document.getElementById("winner-text");
 const finalScoreText = document.getElementById("final-score");
-const fieldWidthSelect = document.getElementById("field-width");
 const backgroundPreview = document.getElementById("background-preview");
 const bonusesContainer = document.getElementById("bonuses-container");
 const lasersContainer = document.getElementById("lasers-container");
@@ -27,18 +34,22 @@ const pauseBackToMenuButton = document.getElementById("pause-back-to-menu");
 const effectsLeft = document.getElementById("effects-left");
 const effectsRight = document.getElementById("effects-right");
 
-// Constants
-const CONTAINER_HEIGHT = 400;
-let CONTAINER_WIDTH = 800;
+// Game Constants
+const CONTAINER_HEIGHT = 600;
+const CONTAINER_WIDTH = 800;
 const PADDLE_HEIGHT = 80;
 const PADDLE_WIDTH = 10;
 const BALL_RADIUS = 6;
 const BASE_PADDLE_SPEED = 6;
-const BASE_BALL_SPEED = 4;
-const BRICK_WIDTH = 40;
-const BRICK_HEIGHT = 40;
+const BASE_BALL_SPEED = 6.4; // Increased by 60% (4 * 1.6)
+const BRICK_WIDTH = 32;
+const BRICK_HEIGHT = 32;
 const BRICK_ROWS = 6;
 const BRICK_PADDING = 5;
+
+//====================================================================
+// 2. GAME CONFIGURATION & STATE
+//====================================================================
 
 // Game Configuration with localStorage support
 function loadGameConfig() {
@@ -56,7 +67,6 @@ function loadGameConfig() {
         mode: 'pvp', // 'pvp', 'pvai', or 'brick'
         difficulty: 3,
         maxScore: 10,
-        fieldWidth: 800,
         p1Keys: {
             up: 'a',
             down: 'q'
@@ -106,6 +116,10 @@ const BONUS_TYPES = {
 };
 
 // Helper functions for SVG positioning
+//====================================================================
+// 3. UTILITY FUNCTIONS
+//====================================================================
+
 function setBallPosition(ballElement, x, y) {
     // For SVG <image> elements, position from top-left corner
     ballElement.setAttribute("x", x - BALL_RADIUS);
@@ -136,10 +150,15 @@ let gameState = {
     leftScore: 0,
     rightScore: 0,
     keysPressed: {},
+    // Paddle acceleration system
+    paddleVelocities: {
+        left: 0,
+        right: 0
+    },
     balls: [
         {
             x: 400,
-            y: 200,
+            y: 300,
             speedX: BASE_BALL_SPEED,
             speedY: 3,
             owner: null, // 'left' or 'right' - last paddle that touched this ball
@@ -148,7 +167,7 @@ let gameState = {
         },
         {
             x: 400,
-            y: 200,
+            y: 300,
             speedX: -BASE_BALL_SPEED,
             speedY: -3,
             owner: null,
@@ -156,10 +175,10 @@ let gameState = {
             element: ball2
         }
     ],
-    paddleLeftY: 160,
-    paddleRightY: 160,
+    paddleLeftY: 260,
+    paddleRightY: 260,
     lastAIUpdate: 0,
-    aiTargetY: 200,
+    aiTargetY: 300,
     gameRunning: false,
     paused: false,
     countdowns: {}, // For ball respawn countdowns
@@ -211,26 +230,6 @@ document.querySelectorAll('input[name="gameMode"]').forEach(radio => {
     });
 });
 
-// Field width preview
-fieldWidthSelect.addEventListener('change', updateFieldPreview);
-
-function updateFieldPreview() {
-    const width = parseInt(fieldWidthSelect.value);
-    
-    // Update background preview to real size
-    backgroundPreview.style.width = `${width}px`;
-    
-    // Show number of bricks that will be generated
-    const availableWidth = width - 350;
-    const brickCols = Math.floor(availableWidth / (BRICK_WIDTH + BRICK_PADDING));
-    const totalBricks = brickCols * BRICK_ROWS;
-    
-    // Update preview label
-    const label = document.querySelector('label[for="field-width"]');
-    if (label) {
-        label.textContent = `Field Width (${totalBricks} bricks in practice mode):`;
-    }
-}
 
 // Apply saved configuration to form elements
 function applyConfigToForm() {
@@ -254,10 +253,6 @@ function applyConfigToForm() {
         maxScoreSelect.value = gameConfig.maxScore.toString();
     }
     
-    // Set field width
-    if (fieldWidthSelect) {
-        fieldWidthSelect.value = gameConfig.fieldWidth.toString();
-    }
     
     // Set player 1 keys
     const p1UpInput = document.getElementById('p1-up');
@@ -273,7 +268,6 @@ function initMenuNavigation() {
         ...document.querySelectorAll('input[name="gameMode"]'),
         document.getElementById('difficulty'),
         document.getElementById('max-score'),
-        document.getElementById('field-width'),
         document.getElementById('p1-up'),
         document.getElementById('p1-down'),
         document.getElementById('start-button')
@@ -340,7 +334,6 @@ function activateMenuElement() {
 }
 
 // Initialize preview and apply saved config
-updateFieldPreview();
 applyConfigToForm();
 initMenuNavigation();
 
@@ -443,12 +436,15 @@ document.addEventListener("keyup", (e) => {
     }
 });
 
+//====================================================================
+// 4. GAME INITIALIZATION & CORE LOOP
+//====================================================================
+
 function startGame() {
     // Get configuration values
     gameConfig.mode = document.querySelector('input[name="gameMode"]:checked').value;
     gameConfig.difficulty = parseInt(document.getElementById('difficulty').value);
     gameConfig.maxScore = parseInt(document.getElementById('max-score').value);
-    gameConfig.fieldWidth = parseInt(document.getElementById('field-width').value);
     gameConfig.p1Keys.up = document.getElementById('p1-up').value.toLowerCase();
     gameConfig.p1Keys.down = document.getElementById('p1-down').value.toLowerCase();
     
@@ -456,13 +452,13 @@ function startGame() {
     saveGameConfig();
     
     // Update game dimensions
-    CONTAINER_WIDTH = gameConfig.fieldWidth;
     gameContainer.style.width = `${CONTAINER_WIDTH}px`;
     document.getElementById('game-svg').setAttribute('viewBox', `0 0 ${CONTAINER_WIDTH} ${CONTAINER_HEIGHT}`);
     
     // Update middle line
     const middleLine = document.getElementById('middle-line');
     middleLine.setAttribute('x', (CONTAINER_WIDTH / 2) - 1);
+    middleLine.setAttribute('height', CONTAINER_HEIGHT);
     
     // Update right paddle position
     setPaddlePosition(paddleRight, CONTAINER_WIDTH - 20, gameState.paddleRightY);
@@ -540,7 +536,10 @@ function createBricks() {
                 y: y,
                 width: BRICK_WIDTH,
                 height: BRICK_HEIGHT,
-                destroyed: false
+                destroyed: false,
+                health: 1,
+                maxHealth: 1,
+                isIndestructible: false
             });
             
             gameState.bricksRemaining++;
@@ -557,8 +556,8 @@ function clearBricks() {
 function resetGame() {
     gameState.leftScore = 0;
     gameState.rightScore = 0;
-    gameState.paddleLeftY = 160;
-    gameState.paddleRightY = 160;
+    gameState.paddleLeftY = 260;
+    gameState.paddleRightY = 260;
     
     // Reset ball configuration based on game mode
     // First, remove any extra balls created by multi-ball bonus
@@ -773,6 +772,10 @@ function resetSingleBall(ballIndex, losingPlayer = null) {
     ball.element.style.display = 'block';
 }
 
+//====================================================================
+// 5. GAME PHYSICS & UPDATES
+//====================================================================
+
 function updatePaddles() {
     const currentTime = Date.now();
     
@@ -798,17 +801,38 @@ function updatePaddles() {
             const reverseEffect = playerEffects.reverseControls && 
                                  (currentTime - playerEffects.reverseControls.startTime < playerEffects.reverseControls.duration);
             
-            let newY = currentY;
             // Apply reverse controls if effect is active
             const actualUpKey = reverseEffect ? downKey : upKey;
             const actualDownKey = reverseEffect ? upKey : downKey;
             
+            // Acceleration system
+            const acceleration = 0.8;
+            const maxSpeed = paddleSpeed;
+            
+            let targetVelocity = 0;
             if (gameState.keysPressed[actualUpKey] && currentY > 0) {
-                newY -= paddleSpeed;
+                targetVelocity = -maxSpeed;
             }
             if (gameState.keysPressed[actualDownKey] && currentY < CONTAINER_HEIGHT - paddleHeight) {
-                newY += paddleSpeed;
+                targetVelocity = maxSpeed;
             }
+            
+            // Apply acceleration toward target velocity or stop immediately
+            let currentVelocity = gameState.paddleVelocities[player];
+            if (targetVelocity !== 0) {
+                // Accelerating
+                currentVelocity += (targetVelocity - currentVelocity) * acceleration;
+            } else {
+                // Immediate stop when no key pressed
+                currentVelocity = 0;
+            }
+            
+            // Update velocity and position
+            gameState.paddleVelocities[player] = currentVelocity;
+            let newY = currentY + currentVelocity;
+            
+            // Clamp position to bounds
+            newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT - paddleHeight));
             
             if (isLeft) {
                 gameState.paddleLeftY = newY;
@@ -1030,9 +1054,9 @@ function explodeBricks(centerX, centerY, explosionRadius, ballOwner) {
     return bricksToDestroy.length;
 }
 
-function checkBrickCollision(ball, ballIndex) {
-    // Let game mode handle brick collisions if it wants to
-    if (currentGameMode && currentGameMode.update) {
+function checkBrickCollision(ball, ballIndex, handleSoloSpecifics = false) {
+    // Solo mode will now use this function too
+    if (!handleSoloSpecifics && currentGameMode && currentGameMode.update) {
         // Solo mode handles its own brick collisions
         if (gameConfig.mode === 'solo') {
             return false;
@@ -1050,40 +1074,115 @@ function checkBrickCollision(ball, ballIndex) {
                 nextBallY + BALL_RADIUS >= brick.y &&
                 nextBallY - BALL_RADIUS <= brick.y + brick.height) {
                 
+                // Indestructible bricks just bounce the ball, don't take damage
+                if (brick.isIndestructible) {
+                    // Determine collision side and bounce
+                    const ballCenterX = nextBallX;
+                    const ballCenterY = nextBallY;
+                    const brickCenterX = brick.x + brick.width / 2;
+                    const brickCenterY = brick.y + brick.height / 2;
+                    
+                    const deltaX = ballCenterX - brickCenterX;
+                    const deltaY = ballCenterY - brickCenterY;
+                    
+                    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                        // Horizontal collision
+                        ball.speedX = -ball.speedX;
+                    } else {
+                        // Vertical collision
+                        ball.speedY = -ball.speedY;
+                    }
+                    
+                    return true; // Collision occurred
+                }
+                
                 // Check if ball has explosive effect
                 const explosiveInfo = gameState.explosiveBalls[ballIndex];
                 if (explosiveInfo) {
                     // Explosive collision - destroy multiple bricks
                     const brickCenterX = brick.x + brick.width / 2;
                     const brickCenterY = brick.y + brick.height / 2;
-                    explodeBricks(brickCenterX, brickCenterY, 60, ball.owner); // 60px explosion radius
+                    if (handleSoloSpecifics && gameConfig.mode === 'solo' && currentGameMode) {
+                        currentGameMode.explodeBricksSolo(brickCenterX, brickCenterY, 60);
+                    } else {
+                        explodeBricks(brickCenterX, brickCenterY, 60, ball.owner); // 60px explosion radius
+                    }
                 } else {
-                    // Normal collision - destroy single brick
-                    brick.destroyed = true;
-                    brick.element.style.display = 'none';
-                    gameState.bricksRemaining--;
+                    // Normal collision - use health system
+                    brick.health--;
                     
-                    // Generate bonus with 10% chance
-                    if (Math.random() < 0.1) {
-                        generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, ball.owner);
+                    // Solo mode specific logic
+                    if (handleSoloSpecifics && currentGameMode && gameConfig.mode === 'solo') {
+                        currentGameMode.combo++;
+                        currentGameMode.maxCombo = Math.max(currentGameMode.maxCombo, currentGameMode.combo);
                     }
                     
-                    // Award points based on ball ownership (both brick modes)
-                    if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
-                        if (ball.owner === 'left') {
-                            gameState.leftScore++;
-                        } else if (ball.owner === 'right') {
-                            gameState.rightScore++;
+                    if (brick.health <= 0) {
+                        // Brick destroyed
+                        brick.destroyed = true;
+                        brick.element.style.display = 'none';
+                        gameState.bricksRemaining--;
+                        
+                        // Generate bonus - different chance for solo mode
+                        const bonusChance = handleSoloSpecifics && gameConfig.mode === 'solo' ? 0.3 : 0.1;
+                        if (Math.random() < bonusChance) {
+                            generateBonus(brick.x + brick.width / 2, brick.y + brick.height / 2, ball.owner);
                         }
                         
-                        // Award bonus points if this was the last brick
-                        if (gameState.bricksRemaining === 0) {
+                        // Award points based on game mode
+                        if (handleSoloSpecifics && gameConfig.mode === 'solo' && currentGameMode) {
+                            // Solo mode scoring
+                            const baseScore = 10 * brick.maxHealth;
+                            const comboBonus = currentGameMode.combo * 5;
+                            const levelBonus = currentGameMode.currentLevel * 2;
+                            const score = baseScore + comboBonus + levelBonus;
+                            
+                            currentGameMode.levelScore += score;
+                            currentGameMode.totalScore += score;
+                            currentGameMode.updateBallSpeeds();
+                            
+                            // Check level complete
+                            if (gameState.bricksRemaining === 0) {
+                                currentGameMode.completeLevel();
+                            }
+                        } else if (gameConfig.mode === 'brick2p' || gameConfig.mode === 'brick') {
+                            // Brick modes scoring
                             if (ball.owner === 'left') {
-                                gameState.leftScore += 10;
+                                gameState.leftScore++;
                             } else if (ball.owner === 'right') {
-                                gameState.rightScore += 10;
+                                gameState.rightScore++;
+                            }
+                            
+                            // Award bonus points if this was the last brick
+                            if (gameState.bricksRemaining === 0) {
+                                if (ball.owner === 'left') {
+                                    gameState.leftScore += 10;
+                                } else if (ball.owner === 'right') {
+                                    gameState.rightScore += 10;
+                                }
                             }
                         }
+                        
+                        updateScore();
+                    } else if (handleSoloSpecifics && gameConfig.mode === 'solo') {
+                        // Update brick appearance for damaged bricks in solo mode
+                        const hue = 0; // Red for damaged
+                        const lightness = 50 - (brick.health - 1) * 5;
+                        const rect = brick.element.querySelector('rect') || brick.element;
+                        if (rect) {
+                            rect.setAttribute("fill", `hsl(${hue}, 70%, ${lightness}%)`);
+                        }
+                        
+                        // Update health text
+                        const text = brick.element.querySelector('text');
+                        if (text) {
+                            text.textContent = brick.health;
+                        }
+                        
+                        // Small score for hit
+                        const hitScore = 5 * currentGameMode.currentLevel;
+                        currentGameMode.levelScore += hitScore;
+                        currentGameMode.totalScore += hitScore;
                         
                         updateScore();
                     }
@@ -1134,6 +1233,9 @@ function checkBrickCollision(ball, ballIndex) {
                         } else {
                             gameOver("Draw");
                         }
+                    } else if (gameConfig.mode === 'solo') {
+                        // Solo mode handles level completion via currentGameMode.completeLevel()
+                        // Don't call gameOver here, let the mode handle it
                     } else {
                         gameOver("All Bricks Destroyed!");
                     }
@@ -1216,7 +1318,11 @@ function updateBalls() {
         
         // Check paddle collisions
         handlePaddleCollision('left');
-        handlePaddleCollision('right');
+        
+        // Only check right paddle collision if not in solo mode
+        if (gameConfig.mode !== 'solo') {
+            handlePaddleCollision('right');
+        }
         
         // Scoring
         if (ball.x < 0) {
@@ -1235,6 +1341,10 @@ function updateBalls() {
         setBallPosition(ball.element, ball.x, ball.y);
     }
 }
+
+//====================================================================
+// 8. USER INTERFACE & DISPLAY
+//====================================================================
 
 function updateScore() {
     if (currentGameMode && currentGameMode.getScoreDisplay) {
@@ -1269,6 +1379,14 @@ function gameOver(winner) {
             winnerText.textContent = `${winnerName} Wins!`;
             finalScoreText.textContent = `Final Score: ${gameState.leftScore} - ${gameState.rightScore}`;
         }
+    } else if (gameConfig.mode === 'solo') {
+        // Solo mode has its own game over handling
+        winnerText.textContent = winner;
+        if (currentGameMode && currentGameMode.totalScore !== undefined) {
+            finalScoreText.textContent = `Final Score: ${currentGameMode.totalScore}`;
+        } else {
+            finalScoreText.textContent = `Level Reached: ${currentGameMode ? currentGameMode.currentLevel : 1}`;
+        }
     } else {
         let winnerName = winner;
         if (gameConfig.mode === 'pvai' && winner === "Player 2") {
@@ -1302,31 +1420,6 @@ function gameLoop() {
 }
 
 // Brick Mode Ball Loss Handler
-function handleBrickModeballLoss(ballIndex, losingPlayer) {
-    const ball = gameState.balls[ballIndex];
-    ball.active = false;
-    ball.element.style.display = 'none';
-    
-    console.log(`DEBUG: Ball ${ballIndex} lost by ${losingPlayer} in brick mode`);
-    
-    // In brick mode, determine ball ownership:
-    // Ball 0 belongs to left player, Ball 1 belongs to right player
-    const ballOwner = ballIndex === 0 ? 'left' : 'right';
-    
-    console.log(`DEBUG: Ball ${ballIndex} owner is ${ballOwner}, losing player is ${losingPlayer}`);
-    
-    if (ballOwner === losingPlayer) {
-        // This ball belongs to the losing player - start countdown
-        console.log(`DEBUG: Ball ${ballIndex} belongs to losing player ${losingPlayer} - starting countdown`);
-        startBallCountdown(ballIndex, losingPlayer);
-    } else {
-        // This ball belongs to the winning player - respawn immediately for the winner
-        console.log(`DEBUG: Ball ${ballIndex} belongs to winning player ${ballOwner} - respawning immediately for ${ballOwner}`);
-        setTimeout(() => {
-            resetSingleBall(ballIndex, ballOwner); // Use ballOwner, not losingPlayer
-        }, 100); // Small delay to avoid visual glitches
-    }
-}
 
 // Ball Countdown System
 function startBallCountdown(ballIndex, playerSide) {
@@ -1382,7 +1475,7 @@ function startBallCountdown(ballIndex, playerSide) {
         // Create countdown text
         const countdownText = document.createElementNS("http://www.w3.org/2000/svg", "text");
         const x = playerSide === 'left' ? 100 : CONTAINER_WIDTH - 100;
-        const y = 200;
+        const y = 300;
         
         countdownText.setAttribute("x", x);
         countdownText.setAttribute("y", y);
@@ -1569,6 +1662,10 @@ function getEffectColor(effectType) {
 // Bonus name display removed - only effect icons with circles are shown
 
 // Bonus System
+//====================================================================
+// 6. BONUS & EFFECTS SYSTEM
+//====================================================================
+
 function generateBonus(x, y, ballOwner) {
     let bonusTypes = Object.values(BONUS_TYPES);
     
@@ -1609,7 +1706,7 @@ function generateBonus(x, y, ballOwner) {
     bonusesContainer.appendChild(bonus);
     
     // Move horizontally toward the paddle that destroyed the brick
-    const horizontalSpeed = 2;
+    const horizontalSpeed = 4; // Doubled from 2 to 4
     const speedX = ballOwner === 'left' ? -horizontalSpeed : horizontalSpeed; // Fall toward owner's paddle
     const speedY = 0; // No vertical movement, purely horizontal
     
@@ -1960,7 +2057,7 @@ function createMultiBall(player) {
         
         newBall = {
             x: 400,
-            y: 200,
+            y: 300,
             speedX: BASE_BALL_SPEED,
             speedY: 3,
             owner: null,
@@ -2053,14 +2150,32 @@ function applyExplosiveBall(player) {
 function updateExplosiveBallsForPlayer(player) {
     // Apply explosive effect to all balls belonging to this player
     gameState.balls.forEach((ball, index) => {
-        if (ball.active && ball.owner === player) {
-            const playerEffects = gameState.activeEffects[player];
-            if (playerEffects && playerEffects.explosiveBall && 
-                Date.now() - playerEffects.explosiveBall.startTime < playerEffects.explosiveBall.duration) {
-                gameState.explosiveBalls[index] = {
-                    player: player,
-                    startTime: Date.now()
-                };
+        if (ball.active) {
+            // In solo mode, apply to all balls
+            // In other modes, apply to balls owned by the player or spawning from their side
+            const shouldApply = gameConfig.mode === 'solo' || 
+                               ball.owner === player || 
+                               (ball.owner === null && ((player === 'left' && ball.speedX > 0) || (player === 'right' && ball.speedX < 0)));
+            
+            if (shouldApply) {
+                const playerEffects = gameState.activeEffects[player];
+                if (playerEffects && playerEffects.explosiveBall && 
+                    Date.now() - playerEffects.explosiveBall.startTime < playerEffects.explosiveBall.duration) {
+                    gameState.explosiveBalls[index] = {
+                        player: player,
+                        startTime: Date.now()
+                    };
+                    // Ensure the ball has the correct owner
+                    if (ball.owner === null) {
+                        ball.owner = player;
+                    }
+                    
+                    // Apply visual effect
+                    ball.element.classList.add('explosive-ball');
+                } else if (gameState.explosiveBalls[index]) {
+                    // Remove visual effect if duration expired
+                    ball.element.classList.remove('explosive-ball');
+                }
             }
         }
     });
@@ -2108,6 +2223,11 @@ function updateEffects() {
         if (!playerEffects.explosiveBall || 
             currentTime - playerEffects.explosiveBall.startTime >= playerEffects.explosiveBall.duration) {
             delete gameState.explosiveBalls[ballIndex];
+            // Remove visual effect
+            const ball = gameState.balls[ballIndex];
+            if (ball && ball.element) {
+                ball.element.classList.remove('explosive-ball');
+            }
         }
     });
     
@@ -2309,6 +2429,10 @@ function checkLaserPaddleCollision(laser) {
     
     return false;
 }
+
+//====================================================================
+// 7. LASER SYSTEM
+//====================================================================
 
 function fireLaser(player) {
     const effects = gameState.activeEffects[player];
